@@ -181,6 +181,39 @@ def get_pupil_center(ROIs_smooth, pupil_size, centered=False):
     else:
         return pupil_center
 
+def get_events(b, window_pre = 2, window_post = 1, n_std = 3, camara_fs = 200):
+    """
+    Estimates event times of high behavior, by calculating a moving mean in a 
+    pre event window, and comparing it to a post event window mean.
+
+    Parameters:
+    - b: np.ndarray, shape (T)
+    - window_pre: float, seconds of pre window
+    - window_post: float, seconds of post window
+    - n_std: float, number of std between pre and post mean to mark an event 
+    
+    Returns:
+    - event_times_indx : list, length (n_events)
+    """
+    pre_i = window_pre * camara_fs
+    post_i = window_post * camara_fs
+    
+    event_times = []
+    
+    for t in range(pre_i, len(b)-post_i):
+        if not event_times or t - event_times[-1] > post_i:
+            tw_pre = np.arange(t-pre_i, t)
+            m_pre = np.mean(b[tw_pre])
+            std_pre = np.std(b[tw_pre])
+            
+            tw_post = np.arange(t, t+post_i)
+            m_post = np.mean(b[tw_post])
+    
+            if m_post > m_pre + n_std*std_pre:
+                event_times.append(t)
+    
+    return event_times
+
 def get_saccades(retina_center, thr=3):
     """
     Estimates saccade times.
@@ -481,7 +514,7 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
 
-def plot_correlation(corr, cluster_type, colors, edges, name, sp):
+def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
     
     cluster_type = np.asarray(cluster_type)
     unique_type = np.unique(cluster_type)
@@ -514,6 +547,35 @@ def plot_correlation(corr, cluster_type, colors, edges, name, sp):
     plt.title(name)
     
     plt.savefig(os.path.join(sp,"plots", name + "_corr.svg"))
+    plt.show()
+
+def plot_correlation_cum(corr, cluster_type, colors, edges, name, sp):
+    
+    cluster_type = np.asarray(cluster_type)
+    unique_type = np.unique(cluster_type)
+    mean_type = dict.fromkeys(colors, None)
+    
+    # Hist
+    for neu_type in unique_type:
+        corr_type = corr[cluster_type == neu_type]
+        mean_type[neu_type] = np.mean(corr_type)
+        plt.hist(corr_type, edges, 
+                 density=True, histtype='step', fill=False, cumulative=1,
+                 edgecolor=colors[neu_type], label=f"{neu_type}")
+    
+    plt.ylim([0,1])
+    plt.xlim([edges[0],-edges[0]])
+
+    plt.vlines(0,0,1,colors="gray",linestyles="dashed")
+    plt.xlabel("r coef")
+    plt.ylabel("Cum density")
+    plt.legend()
+    
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    plt.title(name)
+    
+    plt.savefig(os.path.join(sp,"plots", name + "_cumcorr.svg"))
     plt.show()
 
 def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):
@@ -580,3 +642,25 @@ def plot_exp(Spke_Bundle, sync_cam, name, sp, fs = 30000, y = 1.0):
         plt.gca().spines[s].set_visible(False)
     plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
     plt.show()
+
+def plot_windows_and_events(b, sync_cam, change_t, pl = 10, ylim = [0, 0.5]):
+    
+    nframes = len(b)  
+    p = nframes//pl
+    tws = [np.arange(t*p,(t+1)*p) for t in range(pl)]
+    
+    for tw in tws:
+        fig, ax1 = plt.subplots()
+
+        ax1.set_xlabel('time (s)')
+        ax1.set_ylabel('size')
+        ax1.plot(sync_cam[tw], b[tw], color="#D3B9F4")
+        
+        mask = (change_t >= sync_cam[tw[0]]) & \
+               (change_t < sync_cam[tw[-1]])
+        win_change = change_t[mask]
+        for ti in win_change:
+            ax1.vlines(ti, ylim[0], ylim[1], colors="k", linestyles="--", alpha=0.3)
+        ax1.set_ylim(ylim)
+
+        plt.show()

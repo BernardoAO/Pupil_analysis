@@ -4,8 +4,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 #from tqdm import tqdm
-import helper_functions as hf
-
+import Helper_functions as hf
+assert False
 # data file names
 pupil_data_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data.npy"
 spike_bundle_path = r"D:\NP data\analysis\data-single-unit"
@@ -40,7 +40,7 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
         hf.get_pupil_data(pupil_data_all[exp], Spke_Bundle, exp, period)
     
     hf.plot_exp(Spke_Bundle, sync_cam, exp, save_path)
-    assert False
+    
     # get valid clusters
     valid_cluster_indx, cluster_type = \
         hf.get_valid_cluster(Spke_Bundle, SIN_data)            
@@ -69,8 +69,8 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
         
     neu_pupil_corr = hf.get_correlation(z_fr, pupil_size)
     
-    corr_edges = np.arange(-0.3,0.325,0.025)    
-    hf.plot_correlation(neu_pupil_corr, cluster_type, colors, 
+    corr_edges = np.arange(-0.3,0.32,0.010)
+    hf.plot_correlation_cum(neu_pupil_corr, cluster_type, colors, 
                         corr_edges, plot_name, save_path)
      
     
@@ -85,6 +85,8 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
                           center_edges, plot_name, save_path,clim=[-1,1])
 
 
-
+    
+    ps_change_fast = sync_cam[hf.get_events(pupil_size, sync_cam)]
+    ps_change_slow = sync_cam[hf.get_events(pupil_size, sync_cam, 50)]
 
 

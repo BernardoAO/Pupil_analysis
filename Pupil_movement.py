@@ -6,7 +6,7 @@ import pickle
 from tqdm import tqdm
 #import matplotlib.pyplot as plt
 import scipy.signal as signal
-import helper_functions as hf
+import Helper_functions as hf
 
 data_path = r"D:\NP data\Bernardo_awake_cx\DLC\left_eye\labeled_videos"
 save_path = r"D:\NP data\Bernardo_awake_cx\Results"
