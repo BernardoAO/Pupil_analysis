@@ -185,7 +185,8 @@ def get_pupil_center(ROIs_smooth, pupil_size, centered=False):
     else:
         return pupil_center
 
-def get_events(b, window_pre = 2, window_post = 1, n_std = 3, camara_fs = 200):
+def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
+               camara_fs = 200):
     """
     Estimates event times of high behavior, by calculating a moving mean in a 
     pre event window, and comparing it to a post event window mean.
@@ -194,40 +195,45 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, camara_fs = 200):
     - b: np.ndarray, shape (T) or (2,T)
     - window_pre: float, seconds of pre window
     - window_post: float, seconds of post window
-    - n_std: float, number of std between pre and post mean to mark an event 
+    - n_std: float, number of std between pre and post mean to mark an event
+    - rp: float, minimum time between events
     
     Returns:
-    - event_times_indx : list, length (n_events)
+    - event_indx : list, length (n_events)
     """
     pre_i = window_pre * camara_fs
     post_i = window_post * camara_fs
     
-    event_times = []
-    
+    event_indx = []
+    event_types = []
     if b.ndim == 1:
-        for t in range(pre_i, len(b)-post_i):
-            if not event_times or t - event_times[-1] > post_i:
-                tw_pre = np.arange(t-pre_i, t)
+        for ti in range(pre_i, len(b)-post_i):
+            if not event_indx or (ti - event_indx[-1]) / camara_fs > rp:
+                tw_pre = np.arange(ti-pre_i, ti)
                 m_pre = np.mean(b[tw_pre])
                 std_pre = np.std(b[tw_pre])
                 
-                tw_post = np.arange(t, t+post_i)
+                tw_post = np.arange(ti, ti+post_i)
                 m_post = np.mean(b[tw_post])
         
                 if m_post > m_pre + n_std*std_pre:
-                    event_times.append(t)
+                    event_indx.append(ti)
     else:
-        for t in range(pre_i, b.shape[-1]-post_i):
-            if not event_times or t - event_times[-1] > post_i:
-                tw_pre = np.arange(t-pre_i, t)
+        for ti in range(pre_i, b.shape[-1]-post_i):
+            if not event_indx or (ti - event_indx[-1]) / camara_fs  > rp:
+                tw_pre = np.arange(ti -pre_i, ti)
                 m_pre = np.mean(b[:,tw_pre], axis=1)
                 
-                tw_post = np.arange(t, t+post_i)
+                tw_post = np.arange(ti, ti + post_i)
                 m_post = np.mean(b[:,tw_post], axis=1)
                 
-                if np.linalg.norm(m_post - m_pre) > n_std:
-                    event_times.append(t)
-    return event_times
+                vec = m_post - m_pre
+                if np.linalg.norm(vec) > n_std:
+                    event_indx.append(ti)
+                    angle = np.arctan2(vec[1], vec[0])
+                    event_types.append(angle)
+                    
+    return np.array(event_indx), np.array(event_types)
 
 def get_saccades(retina_center, thr=3):
     """
@@ -586,6 +592,51 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
 
+def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods, fs = 30000):
+    vis_stim = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
+                "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
+                "csd", "chirp"] 
+    vis_name = ["Sp.N.light", "Sp.N.dark", "Mov.bars",
+                "Nat.Mov.", "Nat.Mov.sw", "Nat.Mov.sc",
+                "CSD", "Chirp","grey"]
+    cmap = plt.get_cmap('jet', len(vis_stim))
+    colors = [cmap(i) for i in range(len(vis_stim))]
+    colors.append((0.5, 0.5, 0.5, 0.5))
+    
+    ps_stim = []
+    pc_stim = []
+    for stim in vis_stim:
+        stim_times = periods[stim] / fs
+        start, end = stim_times[[0, -1]]
+        mask = (sync_cam > start) & (sync_cam <= end)
+        if stim==vis_stim[0]:
+            mask_first = (sync_cam < start)
+        ps_stim.append(pupil_size[mask])
+        pc_stim.append(pupil_center[:,mask])
+        
+    ps_stim.append(pupil_size[mask_first])
+    pc_stim.append(pupil_center[:,mask_first])
+    # Size
+    fig, ax = plt.subplots()
+    ax.set_ylabel('Pupil size')
+    
+    bplot = ax.boxplot(ps_stim, patch_artist=True, sym="", labels = vis_name)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    for patch, color in zip(bplot['boxes'], colors):
+        patch.set_facecolor(color)
+        
+    for s in ['right', 'top']:
+        ax.spines[s].set_visible(False)
+    plt.show()
+
+    # Position
+    for s in range(len(vis_stim)+1):
+        plt.subplot(3,3,s+1)
+        plt.plot(pc_stim[s][0,:], pc_stim[s][1,:], color=colors[s])
+        plt.xticks([])
+        plt.yticks([])
+    plt.show()
+
 def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
     
     cluster_type = np.asarray(cluster_type)
@@ -743,11 +794,17 @@ def plot_windows_and_events(b, sync_cam, event_t=[], pl = 10, ylim = [0, 0.5],
         ax1.set_ylabel(name)
         plt.show()
         
-def plot_fr_aligned(tw, mean_fr, c_types, sp="none"):        
+def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):        
     for n in range(mean_fr.shape[0]):
         fig = plt.figure()
-        plt.plot(tw, mean_fr[n,:], 
-                 color=c_types[n])
+        if mean_fr.ndim == 2:
+            plt.plot(tw, mean_fr[n,:], 
+                     color=c_types[n])
+        else:
+            plt.plot(tw, mean_fr[n,:,0], 
+                     color=c_types[n])
+            plt.plot(tw, mean_fr[n,:,1], 
+                     color=c_types[n], linestyle="dashed")
         plt.xlim([tw[0],tw[-1]])
         plt.xlabel("time [s]")
         plt.ylabel("firing rate")
@@ -757,7 +814,7 @@ def plot_fr_aligned(tw, mean_fr, c_types, sp="none"):
             plt.show()
         else:
             plt.savefig(os.path.join(sp,"plots", "Neurons",
-                                     str(n) + "fr_psc_slow.png"))
+                                     str(n) + name +".png"))
             plt.close(fig)
         
 def plot_umap(embedding, emb_p, c_types, mean_emb_c):
@@ -769,3 +826,12 @@ def plot_umap(embedding, emb_p, c_types, mean_emb_c):
     plt.ylabel("UMAP 2")
     plt.show()
 
+def plot_angle(pc_angles):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='polar')
+    
+    for a in pc_angles:
+        ax.plot([a, a], [0, 1], alpha=0.7, color="black")
+    
+    ax.set_yticklabels([])
+    plt.show()

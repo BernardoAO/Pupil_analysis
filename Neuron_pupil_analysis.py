@@ -41,8 +41,9 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     sync_cam, pupil_size, pupil_center = \
         hf.get_pupil_data(pupil_data_all[exp], Spke_Bundle, exp, period)
     
-    hf.plot_exp(Spke_Bundle, sync_cam, exp, save_path)
-    
+    #hf.plot_exp(Spke_Bundle, sync_cam, exp, save_path)
+    #hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, Spke_Bundle["events"])
+
     # get valid clusters
     valid_cluster_indx, cluster_type = \
         hf.get_valid_cluster(Spke_Bundle, SIN_data)            
@@ -78,8 +79,8 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
                         corr_edges, plot_name, save_path)
     
     # Size change events
-    ps_change_fast_indx = hf.get_events(pupil_size)
-    ps_change_slow_indx = hf.get_events(pupil_size, 10)
+    ps_change_fast_indx, _ = hf.get_events(pupil_size)
+    ps_change_slow_indx, _ = hf.get_events(pupil_size, 10)
     #hf.plot_windows_and_events(pupil_size, sync_cam, sync_cam[ps_change_slow_indx])
 
     z_fr_ps_slow, tw = hf.get_fr_aligned(z_fr, ps_change_slow_indx)
@@ -87,12 +88,12 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     #np.save(os.path.join(save_path,"z_fr_ps_slow.npy"), z_fr_ps_slow)
     embedding = np.load(os.path.join(save_path,"z_fr_ps_slow_umap.npy"))
     
-    #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path)
+    #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path, name="fr_psc_slow")
     
     emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
     mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
                                                 emb_p, c_types)
-    hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c)
+    hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
 
     hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
     
@@ -108,7 +109,18 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     hf.plot_similarity_2d(similarity_type, plot_bin, 
                           center_edges, plot_name, save_path,clim=[-1,1])
     
-    pc_change_indx = hf.get_events(pupil_center, n_std=1)
+    # Saccades    
+    pc_change_indx, pc_angles = hf.get_events(pupil_center, window_post=3,
+                                      n_std=3, rp=10)
     hf.plot_windows_and_events(pupil_center, sync_cam, sync_cam[pc_change_indx],
-                               ylim=[100,150], name='Coordinates')
+                               ylim=[100,150], name='Coordinates')    
+    hf.plot_angle(pc_angles)
+    
+    temporal_sc = (pc_angles < np.pi/2) | (pc_angles > 3*np.pi/2) 
+    
+    z_fr_pc, tw = hf.get_fr_aligned(z_fr, pc_change_indx[temporal_sc])
+    hf.plot_fr_aligned(tw, z_fr_pc, c_types, save_path, name="fr_pc_temp")
+
+
+
 
