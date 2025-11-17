@@ -1,12 +1,16 @@
 ## Helper functions
 ### Bernardo AO
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from scipy import interpolate
 import pandas as pd
-from joblib import Parallel, delayed
 import os
+
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib import colors as pltcolors
+
+from joblib import Parallel, delayed
+
 
 def create_pupil_data(output_variables):
     """
@@ -187,7 +191,7 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, camara_fs = 200):
     pre event window, and comparing it to a post event window mean.
 
     Parameters:
-    - b: np.ndarray, shape (T)
+    - b: np.ndarray, shape (T) or (2,T)
     - window_pre: float, seconds of pre window
     - window_post: float, seconds of post window
     - n_std: float, number of std between pre and post mean to mark an event 
@@ -200,18 +204,29 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, camara_fs = 200):
     
     event_times = []
     
-    for t in range(pre_i, len(b)-post_i):
-        if not event_times or t - event_times[-1] > post_i:
-            tw_pre = np.arange(t-pre_i, t)
-            m_pre = np.mean(b[tw_pre])
-            std_pre = np.std(b[tw_pre])
-            
-            tw_post = np.arange(t, t+post_i)
-            m_post = np.mean(b[tw_post])
-    
-            if m_post > m_pre + n_std*std_pre:
-                event_times.append(t)
-    
+    if b.ndim == 1:
+        for t in range(pre_i, len(b)-post_i):
+            if not event_times or t - event_times[-1] > post_i:
+                tw_pre = np.arange(t-pre_i, t)
+                m_pre = np.mean(b[tw_pre])
+                std_pre = np.std(b[tw_pre])
+                
+                tw_post = np.arange(t, t+post_i)
+                m_post = np.mean(b[tw_post])
+        
+                if m_post > m_pre + n_std*std_pre:
+                    event_times.append(t)
+    else:
+        for t in range(pre_i, b.shape[-1]-post_i):
+            if not event_times or t - event_times[-1] > post_i:
+                tw_pre = np.arange(t-pre_i, t)
+                m_pre = np.mean(b[:,tw_pre], axis=1)
+                
+                tw_post = np.arange(t, t+post_i)
+                m_post = np.mean(b[:,tw_post], axis=1)
+                
+                if np.linalg.norm(m_post - m_pre) > n_std:
+                    event_times.append(t)
     return event_times
 
 def get_saccades(retina_center, thr=3):
@@ -459,6 +474,63 @@ def get_similarity(mean_fr, cluster_type, colors):
         
     return similarity_type
 
+def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
+    """
+    Mean firing rate centered on the align indices
+    
+    Parameters:    
+    fr : np.ndarray, shape (T)
+    align_indx: np.ndarray, shape (n_events)
+    win: [pre,post] time window (tw) around the align times [seconds] 
+
+    Returns:
+    mean_fr : np.ndarray, shape (n_neu, Tw)
+    tw: np.ndarray, shape (Tw)
+    """
+    
+    n_unit = fr.shape[0]
+    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs)
+    tw = tiw / camara_fs
+    mean_fr = np.empty((n_unit, len(tiw)))
+    for ti,t in enumerate(tiw):
+        mean_fr[:, ti] = np.mean(fr[:, align_indx - t], axis=1)
+    return mean_fr, tw
+
+def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
+    """
+    Compute the mean fr weighted by a gaussian distances of 2D points from 
+    a list of centers. Also gives a mean color based on c_types.
+    
+    Parameters:
+    mean_fr: np.ndarray, shape (n,Tw)
+    embedding: np.ndarray, shape (n, 2)
+    emb_p: np.ndarray, shape (n_points, 2)
+    c_types: np.ndarray, colors in Hex, shape (n)
+    sigma: float, standard deviation of the Gaussian.
+    
+    Returns
+    -------
+    mean_fr_p: ndarray, shape (n_points,Tw)
+    mean_c_p: list, lenght (n_points)
+    """
+    
+    rgb_colors = np.array([pltcolors.to_rgb(c) for c in c_types])
+    
+    mean_fr_p = np.empty((emb_p.shape[0], mean_fr.shape[1]))
+    mean_c_p = []
+    
+    for p in range(emb_p.shape[0]):
+        diff = embedding - emb_p[p,:]
+        dist2 = np.sum(diff**2, axis=1)  
+        dist = np.exp(-dist2 / (2 * sigma**2))
+
+        mean_fr_p[p,:] = np.average(mean_fr,axis=0,weights=dist)
+
+        avg_rgb = np.average(rgb_colors, axis=0, weights=dist) 
+        mean_c_p.append(pltcolors.to_hex(avg_rgb))
+        
+    return mean_fr_p, mean_c_p
+
 ##m Plotting
 
 def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
@@ -643,24 +715,57 @@ def plot_exp(Spke_Bundle, sync_cam, name, sp, fs = 30000, y = 1.0):
     plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
     plt.show()
 
-def plot_windows_and_events(b, sync_cam, change_t, pl = 10, ylim = [0, 0.5]):
+def plot_windows_and_events(b, sync_cam, event_t=[], pl = 10, ylim = [0, 0.5],
+                            name="size"):
     
-    nframes = len(b)  
+    nframes = b.shape[-1]  
     p = nframes//pl
-    tws = [np.arange(t*p,(t+1)*p) for t in range(pl)]
+    tws = [np.arange(t*p, (t+1)*p) for t in range(pl)]
     
     for tw in tws:
         fig, ax1 = plt.subplots()
-
-        ax1.set_xlabel('time (s)')
-        ax1.set_ylabel('size')
-        ax1.plot(sync_cam[tw], b[tw], color="#D3B9F4")
         
-        mask = (change_t >= sync_cam[tw[0]]) & \
-               (change_t < sync_cam[tw[-1]])
-        win_change = change_t[mask]
-        for ti in win_change:
-            ax1.vlines(ti, ylim[0], ylim[1], colors="k", linestyles="--", alpha=0.3)
-        ax1.set_ylim(ylim)
+        if b.ndim == 1:
+            ax1.plot(sync_cam[tw], b[tw], color="#D3B9F4")
+        else:
+            ax1.plot(sync_cam[tw], b[0,tw], color="#00bbf9")
+            ax1.plot(sync_cam[tw], b[1,tw], color="#00f5d4")
+        
+        if len(event_t) > 0:
+            mask = (event_t >= sync_cam[tw[0]]) & \
+                   (event_t < sync_cam[tw[-1]])
+            win_change = event_t[mask]
+            for ti in win_change:
+                ax1.vlines(ti, ylim[0], ylim[1], colors="k", linestyles="--", alpha=0.3)
 
+        ax1.set_ylim(ylim)
+        ax1.set_xlabel('time (s)')
+        ax1.set_ylabel(name)
         plt.show()
+        
+def plot_fr_aligned(tw, mean_fr, c_types, sp="none"):        
+    for n in range(mean_fr.shape[0]):
+        fig = plt.figure()
+        plt.plot(tw, mean_fr[n,:], 
+                 color=c_types[n])
+        plt.xlim([tw[0],tw[-1]])
+        plt.xlabel("time [s]")
+        plt.ylabel("firing rate")
+        for s in ['right', 'top']:
+            plt.gca().spines[s].set_visible(False)
+        if sp == "none":
+            plt.show()
+        else:
+            plt.savefig(os.path.join(sp,"plots", "Neurons",
+                                     str(n) + "fr_psc_slow.png"))
+            plt.close(fig)
+        
+def plot_umap(embedding, emb_p, c_types, mean_emb_c):
+    plt.scatter(embedding[:,0], embedding[:,1],c=c_types,
+                alpha=0.8, edgecolors="none")
+    plt.scatter(emb_p[:,0], emb_p[:,1],c=mean_emb_c, 
+                marker="s",edgecolors="white")
+    plt.xlabel("UMAP 1")
+    plt.ylabel("UMAP 2")
+    plt.show()
+

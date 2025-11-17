@@ -28,9 +28,11 @@ experiments.sort()
 
 # file loop
 for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
+    
     plot_name = exp + "_" + period
     
-    ## Import 
+    ## Import
+    
     # spike data
     Spke_Bundle, spiketimes, SIN_data = \
         hf.import_spike_data(exp, spike_bundle_path)
@@ -45,10 +47,10 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     valid_cluster_indx, cluster_type = \
         hf.get_valid_cluster(Spke_Bundle, SIN_data)            
     valid_spiketimes = [spiketimes[i] for i in valid_cluster_indx]
-    
+    c_types = np.array([colors[n] for n in cluster_type])
     
     ## Firing rate
-    print("getting fr")
+    
     firing_rate = hf.get_firing_rate(valid_spiketimes, sync_cam)
     
     m_fr = np.expand_dims(np.mean(firing_rate, axis=1), axis=1)
@@ -56,6 +58,8 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     z_fr = (firing_rate - m_fr) / std_fr
         
     ## Pupil size
+    
+    # correlation
     mean_fr_size, _, s_bins = \
         hf.get_mean_fr_size(z_fr, pupil_size, 0.12, 0.42)
     
@@ -72,7 +76,27 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     corr_edges = np.arange(-0.3,0.32,0.010)
     hf.plot_correlation_cum(neu_pupil_corr, cluster_type, colors, 
                         corr_edges, plot_name, save_path)
-     
+    
+    # Size change events
+    ps_change_fast_indx = hf.get_events(pupil_size)
+    ps_change_slow_indx = hf.get_events(pupil_size, 10)
+    #hf.plot_windows_and_events(pupil_size, sync_cam, sync_cam[ps_change_slow_indx])
+
+    z_fr_ps_slow, tw = hf.get_fr_aligned(z_fr, ps_change_slow_indx)
+    
+    #np.save(os.path.join(save_path,"z_fr_ps_slow.npy"), z_fr_ps_slow)
+    embedding = np.load(os.path.join(save_path,"z_fr_ps_slow_umap.npy"))
+    
+    #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path)
+    
+    emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
+    mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
+                                                emb_p, c_types)
+    hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c)
+
+    hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
+    
+    
     
     ## Pupil center
     center_edges = np.arange(105, 145, 5)
@@ -83,10 +107,8 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     plot_bin = 19
     hf.plot_similarity_2d(similarity_type, plot_bin, 
                           center_edges, plot_name, save_path,clim=[-1,1])
-
-
     
-    ps_change_fast = sync_cam[hf.get_events(pupil_size, sync_cam)]
-    ps_change_slow = sync_cam[hf.get_events(pupil_size, sync_cam, 50)]
-
+    pc_change_indx = hf.get_events(pupil_center, n_std=1)
+    hf.plot_windows_and_events(pupil_center, sync_cam, sync_cam[pc_change_indx],
+                               ylim=[100,150], name='Coordinates')
 
