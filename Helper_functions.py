@@ -3,6 +3,7 @@
 import numpy as np
 from scipy import interpolate
 import pandas as pd
+from sklearn.decomposition import PCA
 import os
 
 import matplotlib.pyplot as plt
@@ -252,7 +253,7 @@ def get_saccades(retina_center, thr=3):
     return saccade_indx
     
 def import_spike_data(exp, path_2_spike_bundle, 
-                      sampling_rate = 30000):
+                      fs = 30000):
     """
     Imports spike bundle data from the _Complete_spiketime_Header_TTLs_withdrops_withGUIclassif.npy files,
     and supposedly inhibitory neuron data from the '_local_storage_SIN.npy' files
@@ -262,7 +263,7 @@ def import_spike_data(exp, path_2_spike_bundle,
                                     exp + '_Complete_spiketime_Header_TTLs_withdrops_withGUIclassif.npy')
     Spke_Bundle = \
         np.load(Spke_Bundle_name, allow_pickle=True,encoding='latin1').item()
-    spiketimes = [unit_times / sampling_rate
+    spiketimes = [unit_times / fs
                   for unit_times in Spke_Bundle['spiketimes_aligned']]  
     
     # load Supposedly inhibitory neurons file
@@ -274,20 +275,41 @@ def import_spike_data(exp, path_2_spike_bundle,
 
     return Spke_Bundle, spiketimes, SIN_data
 
-def get_pupil_data(pupil_data, Spke_Bundle, exp, period, fs = 30000):
+def import_pupil_data(pupil_data, Spke_Bundle, exp, period, fs = 30000):
+    """
+    Imports pupil data, concatenating all videos for an experiment
 
+    """
     # Exceptions
     if exp == '2023-03-16_12-16-07':
         pupil_data = pupil_data.iloc[1:]
     
+    # Size
     pupil_sizes_pd = pupil_data.loc[pupil_data['awake'], 'pupil_size']
     pupil_size = np.concatenate(pupil_sizes_pd.to_numpy())
-    pupil_center_pd = pupil_data.loc[pupil_data['awake'], 'pupil_center']
-    pupil_center = np.concatenate(pupil_center_pd.to_numpy(), axis = 1)
-    
     n_points_ses = [len(s) for s in pupil_sizes_pd]
     n_frames = sum(n_points_ses)
     
+    # Center
+    pupil_center_pd = pupil_data.loc[pupil_data['awake'], 'pupil_center']
+    pupil_center = np.concatenate(pupil_center_pd.to_numpy(), axis = 1)
+    
+    # Saccades
+    saccades_pd = pupil_data.loc[pupil_data['awake'], 'saccade_indx']
+    saccades = {'temporal': np.array([]),
+                'nasal': np.array([])}
+    off_set = 0
+    for s in range(len(saccades_pd)):
+        temporal_s = np.array(saccades_pd[s+1]["temporal"]) + off_set
+        saccades["temporal"] = np.append(saccades["temporal"], temporal_s)
+        
+        nasal_s = np.array(saccades_pd[s+1]["nasal"]) + off_set
+        saccades["nasal"] = np.append(saccades["nasal"], nasal_s)
+        
+        off_set += n_points_ses[s]
+    saccades["temporal"] = saccades["temporal"].astype(np.int64)
+    saccades["nasal"] = saccades["nasal"].astype(np.int64)
+    # Period
     sync_all_cam = Spke_Bundle["Synchronization_TTLs"]["Sync_cam"] / fs
     sync_cam = sync_all_cam[:n_frames]
     
@@ -299,7 +321,7 @@ def get_pupil_data(pupil_data, Spke_Bundle, exp, period, fs = 30000):
         mask = (sync_cam > start) & (sync_cam <= end)
         
 
-    return sync_cam[mask], pupil_size[mask], pupil_center[:,mask]
+    return sync_cam[mask], pupil_size[mask], pupil_center[:,mask], saccades
 
 def get_valid_cluster(Spke_Bundle, SIN_data):
     """
@@ -485,7 +507,7 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     Mean firing rate centered on the align indices
     
     Parameters:    
-    fr : np.ndarray, shape (T)
+    fr : np.ndarray, shape (n_neu, T)
     align_indx: np.ndarray, shape (n_events)
     win: [pre,post] time window (tw) around the align times [seconds] 
 
@@ -495,11 +517,11 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     """
     
     n_unit = fr.shape[0]
-    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs)
+    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
     tw = tiw / camara_fs
     mean_fr = np.empty((n_unit, len(tiw)))
-    for ti,t in enumerate(tiw):
-        mean_fr[:, ti] = np.mean(fr[:, align_indx - t], axis=1)
+    for i, ti in enumerate(tiw):
+        mean_fr[:, i] = np.mean(fr[:, align_indx + ti], axis=1)
     return mean_fr, tw
 
 def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
@@ -514,8 +536,7 @@ def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
     c_types: np.ndarray, colors in Hex, shape (n)
     sigma: float, standard deviation of the Gaussian.
     
-    Returns
-    -------
+    Returns:
     mean_fr_p: ndarray, shape (n_points,Tw)
     mean_c_p: list, lenght (n_points)
     """
@@ -536,6 +557,36 @@ def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
         mean_c_p.append(pltcolors.to_hex(avg_rgb))
         
     return mean_fr_p, mean_c_p
+
+def neuron_PCA(fr, types, n_components = 1):
+    """
+    Applies PCA and projects the data, concatenating time and class for every 
+    unit type.
+
+    Parameters:
+    fr: np.ndarray, shape (n,t,c)
+    types: np.ndarray, shape (n)
+    n_components: int
+    
+    Returns:
+    projection_typ: ndarray, shape (n_typ, n_components, t, c)
+    """
+    n, t, c = fr.shape
+    n_typ = len(np.unique(types))
+    projection_typ = np.empty((n_typ, n_components, t, c))
+    
+    for typ_i, ty in enumerate(np.unique(types)):
+        fr_ty = fr[ty == types, :, :]
+        n = fr_ty.shape[0]
+        
+        X = fr_ty.reshape(n, t * c).T
+
+        pca = PCA(n_components=n_components)
+        projection = pca.fit_transform(X)  
+        projection_typ[typ_i,:,:,:] = projection.T.reshape(n_components, t, c)
+
+    return projection_typ
+
 
 ##m Plotting
 
@@ -816,6 +867,41 @@ def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):
             plt.savefig(os.path.join(sp,"plots", "Neurons",
                                      str(n) + name +".png"))
             plt.close(fig)
+
+def plot_raster(st, sync_cam, align_indx, colors, 
+                tw, mean_fr, c_types, sp="none", name="fr_aligned"):
+    
+    for n, spikes in enumerate(st):
+
+        aligned_spikes = []
+        for ti in align_indx:
+            spk = np.array(spikes) - sync_cam[ti]
+            tw_spks = (spk > tw[0]) & (spk < tw[-1]) 
+            aligned_spikes.append(spk[tw_spks])
+        
+        fig, axes = plt.subplots(2,1, figsize=(10, 8))
+        
+        axes[0].eventplot(aligned_spikes, colors=colors)  
+        axes[0].set_xlim([tw[0],tw[-1]])
+        axes[0].axis('off')
+        
+        axes[1].plot(tw, mean_fr[n,:,0], 
+                 color=c_types[n])
+        axes[1].plot(tw, mean_fr[n,:,1], 
+                 color=c_types[n], linestyle="dashed")
+        axes[1].set_xlim([tw[0],tw[-1]])
+        axes[1].set_xlabel("time [s]")
+        axes[1].set_ylabel("firing rate")
+        plt.tight_layout()
+        for s in ['right', 'top']:
+            axes[1].spines[s].set_visible(False)
+            
+        if sp == "none":
+            plt.show()
+        else:
+            plt.savefig(os.path.join(sp,"plots", "Neurons",
+                                     str(n) + name +".png"))
+            plt.close(fig)
         
 def plot_umap(embedding, emb_p, c_types, mean_emb_c):
     plt.scatter(embedding[:,0], embedding[:,1],c=c_types,
@@ -835,3 +921,46 @@ def plot_angle(pc_angles):
     
     ax.set_yticklabels([])
     plt.show()
+    
+def plot_pca(tw, pca_pc, colors, multi_d=False):
+    types = colors.keys()
+    if not multi_d:
+        for c in range(pca_pc.shape[1]):        
+            fig, axes = plt.subplots(len(types), 1, figsize=(10, 8))
+            for ti, typ in enumerate(types):
+                axes[ti].plot(tw, pca_pc[ti,c,:,0], color=colors[typ])
+                axes[ti].plot(tw, pca_pc[ti,c,:,1], color=colors[typ], 
+                              linestyle="dashed")
+                ylim = axes[ti].get_ylim()
+                axes[ti].vlines(0, ylim[0], ylim[1], 
+                                colors="k", linestyles="--", alpha=0.3)
+                axes[ti].set_ylabel("PC" + str(c+1))
+                if ti < len(types) - 1:
+                    axes[ti].set_xticks([])
+                else:
+                    axes[ti].set_xlabel("time [s]")
+                for s in ['right', 'top']:
+                    axes[ti].spines[s].set_visible(False)
+            plt.tight_layout()
+            plt.show()
+    else:
+        fig, axes = plt.subplots(1, len(types), figsize=(12, 8), 
+                                 subplot_kw={'projection': '3d'})
+        for ti, typ in enumerate(types):
+            axes[ti].plot3D(pca_pc[ti,0,:,0], pca_pc[ti,1,:,0], pca_pc[ti,2,:,0],
+                        color=colors[typ])
+            axes[ti].plot3D(pca_pc[ti,0,:,1], pca_pc[ti,1,:,1], pca_pc[ti,2,:,1],
+                        color=colors[typ], linestyle="dashed")
+            
+            axes[ti].set_xlabel("PC1")
+            axes[ti].set_ylabel("PC2")
+            axes[ti].set_zlabel("PC3")
+            
+            axes[ti].set_xticks([])
+            axes[ti].set_yticks([])
+            axes[ti].set_zticks([])
+            
+        plt.tight_layout()
+        plt.show()
+
+

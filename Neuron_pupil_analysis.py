@@ -5,7 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 #from tqdm import tqdm
 import Helper_functions as hf
-assert False
+#assert False
+
 # data file names
 pupil_data_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data.npy"
 spike_bundle_path = r"D:\NP data\analysis\data-single-unit"
@@ -38,8 +39,8 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
         hf.import_spike_data(exp, spike_bundle_path)
     
     # merge pupil data for the exp
-    sync_cam, pupil_size, pupil_center = \
-        hf.get_pupil_data(pupil_data_all[exp], Spke_Bundle, exp, period)
+    sync_cam, pupil_size, pupil_center, saccades = \
+        hf.import_pupil_data(pupil_data_all[exp], Spke_Bundle, exp, period)
     
     #hf.plot_exp(Spke_Bundle, sync_cam, exp, save_path)
     #hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, Spke_Bundle["events"])
@@ -86,16 +87,18 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
     z_fr_ps_slow, tw = hf.get_fr_aligned(z_fr, ps_change_slow_indx)
     
     #np.save(os.path.join(save_path,"z_fr_ps_slow.npy"), z_fr_ps_slow)
-    embedding = np.load(os.path.join(save_path,"z_fr_ps_slow_umap.npy"))
+    umap_an = False
+    if umap_an == True:
+        embedding = np.load(os.path.join(save_path,"z_fr_ps_slow_umap.npy"))
+        
+        #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path, name="fr_psc_slow")
+        
+        emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
+        mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
+                                                    emb_p, c_types)
+        hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
     
-    #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path, name="fr_psc_slow")
-    
-    emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
-    mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
-                                                emb_p, c_types)
-    hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
-
-    hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
+        hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
     
     
     
@@ -110,17 +113,31 @@ for exp in ['2023-03-16_12-16-07']: #tqdm(experiments, desc="Files processed"):
                           center_edges, plot_name, save_path,clim=[-1,1])
     
     # Saccades    
-    pc_change_indx, pc_angles = hf.get_events(pupil_center, window_post=3,
-                                      n_std=3, rp=10)
-    hf.plot_windows_and_events(pupil_center, sync_cam, sync_cam[pc_change_indx],
-                               ylim=[100,150], name='Coordinates')    
-    hf.plot_angle(pc_angles)
+    saccades_all = np.concatenate((saccades["temporal"], 
+                                saccades["nasal"]), axis=0)
+    msc_colors = ["navy" if sc < len(saccades["temporal"]) else 
+                  "violet" for sc in range(len(saccades_all))]
     
-    temporal_sc = (pc_angles < np.pi/2) | (pc_angles > 3*np.pi/2) 
+    win = [-0.25,1]
+    fr_sc_t, tw = hf.get_fr_aligned(firing_rate, saccades["temporal"], win=win)    
+    fr_sc_n, tw = hf.get_fr_aligned(firing_rate, saccades["nasal"], win=win)
     
-    z_fr_pc, tw = hf.get_fr_aligned(z_fr, pc_change_indx[temporal_sc])
-    hf.plot_fr_aligned(tw, z_fr_pc, c_types, save_path, name="fr_pc_temp")
+    fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
+
+    hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
+                tw, fr_sc, c_types, save_path, name="fr_man_sac")
+
+
+    pca_pc = hf.neuron_PCA(fr_sc, c_types, n_components=10)
+    
+    hf.plot_pca(tw, pca_pc[:,:3,:,:], colors)
+    hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, multi_d=True)
 
 
 
+""" # TODO
+hf.plot_angle(pc_angles)
 
+temporal_sc = (pc_angles < np.pi/2) | (pc_angles > 3*np.pi/2)   
+nasal_sc = (pc_angles > np.pi/2) & (pc_angles < 3*np.pi/2)     
+"""
