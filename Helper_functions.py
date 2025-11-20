@@ -275,11 +275,14 @@ def import_spike_data(exp, path_2_spike_bundle,
 
     return Spke_Bundle, spiketimes, SIN_data
 
-def import_pupil_data(pupil_data, Spke_Bundle, exp, period, fs = 30000):
+def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
     """
     Imports pupil data, concatenating all videos for an experiment
 
     """
+    exp_pd_path =  os.path.join(pupil_data_path, "pupil_data_" + exp + ".pkl")
+    pupil_data = pd.read_pickle(exp_pd_path)
+    
     # Exceptions
     if exp == '2023-03-16_12-16-07':
         pupil_data = pupil_data.iloc[1:]
@@ -356,8 +359,8 @@ def get_valid_cluster(Spke_Bundle, SIN_data):
 
 def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
     """
-    Calculates a matrix of firing rates (n_units x time), by looking at
-    a time window around each cam frame.
+    Calculates a matrix of firing rates and z scored fr (n_units x time) using 
+    the 2 indices method, considering a centered window around each camara frame. 
 
     Parameters:
     - spike_times: list of length n_units with np.ndarrays, shape (n_spikes)
@@ -366,7 +369,8 @@ def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
     - n_jobs: int, number of parallel jobs (default -1 = use all cores)
 
     Returns:
-    - firing_rates: ndarray of shape (n_units, len(bt))
+    - firing_rate: ndarray of shape (n_units, len(bt))
+    - z_fr: ndarray of shape (n_units, len(bt))
     """
     half_win = win / 2
 
@@ -389,15 +393,19 @@ def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
         return firing_rate
 
     # Parallelize across neurons
-    firing_rates = Parallel(n_jobs=n_jobs)(
+    firing_rate = Parallel(n_jobs=n_jobs)(
         delayed(compute_unit_rate)(st) for st in spike_times
     )
 
-    firing_rates = np.array(firing_rates)
-    return firing_rates / win
+    firing_rate = np.array(firing_rate) / win
+    
+    m_fr = np.expand_dims(np.mean(firing_rate, axis=1), axis=1)
+    std_fr = np.expand_dims(np.std(firing_rate, axis=1), axis=1)    
+    z_fr = (firing_rate - m_fr) / std_fr
+    
+    return firing_rate, z_fr
 
-def get_mean_fr_size(fr, state, 
-                     start = 0.05, stop = 0.35, step = 0.02):
+def get_mean_fr_size(fr, state,  start = 0.12, stop = 0.42, step = 0.02):
     """
     Calculates the mean and std of the firng rate for a given state.
     
