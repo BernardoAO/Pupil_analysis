@@ -61,31 +61,40 @@ def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name,
     hf.plot_similarity_2d(similarity_type, plot_bin, 
                           center_edges, plot_name, save_path,clim=[-1,1])
 
-def saccade_analysis(saccades, firing_rate, valid_spiketimes, sync_cam, 
-                     c_types, save_path, colors):
+def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes, 
+                     sync_cam, c_types, save_path, colors):
+    
+    # Plot saccade direction
+    hf.plot_event(saccades["temporal"], pupil_center[0,:], "x coordinate")
+    hf.plot_event(saccades["nasal"], pupil_center[0,:], "x coordinate")
+    
     saccades_all = np.concatenate((saccades["temporal"], 
                                 saccades["nasal"]), axis=0)
     msc_colors = ["navy" if sc < len(saccades["temporal"]) else 
                   "violet" for sc in range(len(saccades_all))]
     
+    # Get saccade align fr
     win = [-0.25,1]
     fr_sc_t, tw = hf.get_fr_aligned(firing_rate, saccades["temporal"], win=win)    
     fr_sc_n, tw = hf.get_fr_aligned(firing_rate, saccades["nasal"], win=win)
     
     fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
-
+    
     hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
                 tw, fr_sc, c_types, save_path, name="fr_man_sac")
-
-
+    
+    # PCA
     pca_pc = hf.neuron_PCA(fr_sc, c_types, n_components=10)
     
     hf.plot_pca(tw, pca_pc[:,:3,:,:], colors)
     hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, multi_d=True)
     
-    """ # TODO 
-    hf.plot_angle(pc_angles)
-    """
+    # Response times
+    rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], thres=1.5)
+    
+    edges = np.arange(-0.2, 1, 0.01)
+    hf.plot_metric_typ_cum(rts_sc_t, cluster_type, colors, edges, "rts", save_path)
+    
 
 def main():
     # data file names
@@ -152,7 +161,27 @@ def main():
         saccade_analysis(saccades, firing_rate, valid_spiketimes, sync_cam, 
                          c_types, save_path, colors)
 
+def plot_event(events, b, name, win = [-0.25, 0.25], camara_fs=200):
+    
+    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
+    tib = np.arange(win[0]*camara_fs, 0, dtype=int)
+    tw = tiw / camara_fs
+
+    for e in events:
+        event_b = b[e + tiw] - np.mean(b[e + tib])
+        plt.plot(tw, event_b, color="black", alpha=0.6)
+        
+    plt.xlabel("time [s]")
+    plt.ylabel(name)
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    plt.show()
+
+# check saccades 14 nasal and 2 temporal
 if __name__ == "__main__":
-    main()
+    #main()
+
+    
+
 
 

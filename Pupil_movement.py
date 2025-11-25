@@ -9,7 +9,7 @@ import scipy.signal as signal
 import Helper_functions as hf
 
 data_path = r"D:\NP data\Bernardo_awake_cx\DLC\left_eye\labeled_videos"
-save_path = r"D:\NP data\Bernardo_awake_cx\Results"
+save_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data"
 pd_path = os.path.join(save_path,"pupil_data.npy")
 
 n_pupil = 8
@@ -20,9 +20,9 @@ output_variables = ["session", "awake","ROIs_smooth", "pupil_center",
                     "pupil_size", "saccade_indx"]
 
 if os.path.isfile(pd_path):
-    pupil_data = np.load(pd_path, allow_pickle=True).item()
+    pupil_data_all = np.load(pd_path, allow_pickle=True).item()
 else:
-    pupil_data = hf.create_pupil_data(output_variables)
+    pupil_data_all = hf.create_pupil_data(output_variables)
 
 os.chdir(data_path)
 all_files = [f for f in os.listdir() if f[-11:] == "full.pickle"]
@@ -32,8 +32,9 @@ work_files = all_files
 for file in tqdm(work_files, desc="Files processed"):
     try:
         session = file[5:24]
-        exp = [exp for exp in pupil_data 
-               if pupil_data[exp]["session"].eq(session).any()][0]
+        exp = [exp for exp in pupil_data_all 
+               if pupil_data_all[exp]["session"].eq(session).any()][0]
+        pupil_data = pupil_data_all[exp]
         
         ## Import data
         with open(file, 'rb') as f:
@@ -79,7 +80,7 @@ for file in tqdm(work_files, desc="Files processed"):
                                            pupil_size_clean * eye_lenght)
         
         ## Get saccades
-        saccade_indx = []#hf.get_saccades(retina_center)
+        saccade_indx = [] # manual saccades used instead
         
         # Plot
         hf.plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
@@ -89,15 +90,15 @@ for file in tqdm(work_files, desc="Files processed"):
         mask = pupil_data[exp]["session"] == session
     
         row_index = pupil_data[exp].loc[mask].index[0]
-        pupil_data[exp].at[row_index, "ROIs_smooth"] = ROIs_smooth
-        pupil_data[exp].at[row_index, "pupil_center"] = pupil_center
-        pupil_data[exp].at[row_index, "pupil_size"] = pupil_size
-        pupil_data[exp].at[row_index, "saccade_indx"] = saccade_indx
+        pupil_data.at[row_index, "ROIs_smooth"] = ROIs_smooth
+        pupil_data.at[row_index, "pupil_center"] = pupil_center
+        pupil_data.at[row_index, "pupil_size"] = pupil_size
+        pupil_data.at[row_index, "saccade_indx"] = saccade_indx
     except:
         tqdm.write(" Error when processing file " + file)
 
-
-#np.save(pd_path, pupil_data)
+exp_pd_path =  os.path.join(save_path, "pupil_data_" + exp + ".pkl")
+pupil_data.to_pickle(exp_pd_path)
 
 
 

@@ -4,6 +4,7 @@ import numpy as np
 from scipy import interpolate
 import pandas as pd
 from sklearn.decomposition import PCA
+from sklearn.metrics import roc_auc_score
 import os
 
 import matplotlib.pyplot as plt
@@ -235,22 +236,6 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
                     event_types.append(angle)
                     
     return np.array(event_indx), np.array(event_types)
-
-def get_saccades(retina_center, thr=3):
-    """
-    Estimates saccade times.
-
-    Parameters:
-    - retina_center : np.ndarray, shape (2, T)
-    - thr: float, threshold of detection
-
-    Returns:
-    - saccade_indx : np.ndarray, shape (T,)
-    """
-    diff = np.diff(retina_center, axis=1)
-    distance = np.sqrt(diff[0,:]**2 + diff[1,:]**2)
-    saccade_indx = np.where(distance > thr)[0]
-    return saccade_indx
     
 def import_spike_data(exp, path_2_spike_bundle, 
                       fs = 30000):
@@ -525,12 +510,68 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     """
     
     n_unit = fr.shape[0]
+    
     tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
     tw = tiw / camara_fs
+    
     mean_fr = np.empty((n_unit, len(tiw)))
     for i, ti in enumerate(tiw):
         mean_fr[:, i] = np.mean(fr[:, align_indx + ti], axis=1)
+
     return mean_fr, tw
+
+def get_response_times(fr, align_indx, win=[-1,-0.2, 1], thres=0.1, n_tw = 5,
+                       camara_fs = 200):
+    """
+    Obtains the reaction times for each neuron, i.e. when AUROC with a basal 
+    distribution goes over a threshold for n_tw consecutive windows.
+    
+    Parameters:    
+    fr : np.ndarray, shape (n_neu, T)
+    align_indx: np.ndarray, shape (n_events)
+    thres: float, threshold for the difference of auroc to 0.5
+    n_tw: int, number of consecutive windows above the thres
+    win: [basal_start, basal_end, post_end]  
+
+    Returns:
+    rts : np.ndarray, shape (n_neu)
+    """
+    
+    n_unit = fr.shape[0]
+    
+    tiw_basal = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)   
+    tiw_post = np.arange(win[1]*camara_fs, win[2]*camara_fs, dtype=int)    
+         
+    rts = np.full(n_unit, np.nan)
+    for n in range(n_unit):
+        
+        idx = align_indx[:, None] + tiw_basal[None, :]
+        basal_fr = fr[n, idx].flatten() # shape (n_trials, tw)
+        
+        idx = align_indx[:, None] + tiw_post[None, :]
+        post_fr = fr[n, idx]
+
+        i = 0
+        sig_tw = 0
+        while i < len(tiw_post) and np.isnan(rts[n]):
+            post_fr_t = post_fr[:,i]
+            
+            y_true = np.concatenate([np.zeros_like(basal_fr), 
+                                     np.ones_like(post_fr_t)])
+            scores = np.concatenate([basal_fr, post_fr_t])
+
+            auc = roc_auc_score(y_true, scores)
+
+            if np.abs(auc - 0.5) > thres:
+                sig_tw += 1
+                if sig_tw == n_tw:
+                    rts[n] = (tiw_post[i] - n_tw) / camara_fs
+            else:
+                sig_tw = 0
+            
+            i += 1
+
+    return rts
 
 def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
     """
@@ -731,22 +772,20 @@ def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
     plt.savefig(os.path.join(sp,"plots", name + "_corr.svg"))
     plt.show()
 
-def plot_correlation_cum(corr, cluster_type, colors, edges, name, sp):
+def plot_metric_typ_cum(metric, cluster_type, colors, edges, name, sp):
     
     cluster_type = np.asarray(cluster_type)
     unique_type = np.unique(cluster_type)
-    mean_type = dict.fromkeys(colors, None)
     
     # Hist
     for neu_type in unique_type:
-        corr_type = corr[cluster_type == neu_type]
-        mean_type[neu_type] = np.mean(corr_type)
-        plt.hist(corr_type, edges, 
+        metric_type = metric[(cluster_type == neu_type) & (~np.isnan(metric))]
+        plt.hist(metric_type, edges, 
                  density=True, histtype='step', fill=False, cumulative=1,
                  edgecolor=colors[neu_type], label=f"{neu_type}")
     
     plt.ylim([0,1])
-    plt.xlim([edges[0],-edges[0]])
+    plt.xlim([edges[0], edges[-1]])
 
     plt.vlines(0,0,1,colors="gray",linestyles="dashed")
     plt.xlabel("r coef")
@@ -757,7 +796,7 @@ def plot_correlation_cum(corr, cluster_type, colors, edges, name, sp):
         plt.gca().spines[s].set_visible(False)
     plt.title(name)
     
-    plt.savefig(os.path.join(sp,"plots", name + "_cumcorr.svg"))
+    plt.savefig(os.path.join(sp,"plots", name + "_cum.svg"))
     plt.show()
 
 def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):
