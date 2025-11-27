@@ -13,58 +13,6 @@ from matplotlib import colors as pltcolors
 
 from joblib import Parallel, delayed
 
-
-def create_pupil_data(output_variables):
-    """
-    Creates a dictionary, with each experiment day as a key, of panda arrays 
-    with the columns names specified in output_variables. Each column is 
-    initialized as an empty array, with the exception of session, corresponding
-    to the video names, and awake, which is True for awake sessions.
-    
-    Parameters:
-    - output_variables : list
-    
-    Returns:
-    - pupil_data : dictionary
-    """
-    spike_bundle_path = r"D:\NP data\analysis\data-single-unit" 
-    video_path = r"D:\NP data\Bernardo_awake_cx\DLC\left_eye\all_videos"
-    
-    experiments = sorted([exp for exp in os.listdir(spike_bundle_path) 
-                          if exp.startswith("20")])
-    videos = sorted([video for video in os.listdir(video_path) 
-              if video.startswith("cam")])
-    num_awake = np.array([0,0, #2021
-                          4,4, #2022
-                          4,4,4,4,4,3,5,5,3,5,4,5,7,7,6,0,0,0]) #2023
-    pupil_data = {}
-
-    for e, exp in enumerate(experiments):
-        date = exp[:10]
-        exp_videos = [v[5:24] for v in videos if v[5:15] == date]
-        
-        if exp == "2023-03-15_11-05-00": # days with 2 exp
-            exp_videos = [v for v in exp_videos if int(v[16:18]) < 15]
-        elif exp == "2023-03-15_15-23-14":
-            exp_videos = [v for v in exp_videos if int(v[16:18]) <= 15]
-        elif exp == "2023-08-10_13-07-52":
-            exp_videos = [v for v in exp_videos if int(v[16:18]) < 16]
-        elif exp == "2023-08-10_16-32-27":
-            exp_videos = [v for v in exp_videos if int(v[16:18]) <= 16]
-        
-        awake = [i <= num_awake[e] for i in range(len(exp_videos))]
-        data = {
-            "session": exp_videos,
-            "awake": awake,
-        }
-        for var in output_variables:
-            if var != "session" and var != "awake":
-                data[var] = [np.array([])] * len(exp_videos)
-
-        pupil_data[exp] = pd.DataFrame(data)
-
-    return pupil_data    
-
 def handle_exceptions(ROIs_smooth, tv, session):
     if session == "2023-03-16-11-14-37":
         mask = tv < 0.15 * 60
@@ -186,6 +134,49 @@ def get_pupil_center(ROIs_smooth, pupil_size, centered=False):
         return pupil_center - np.nanmean(pupil_center, axis=1).reshape(-1,1)
     else:
         return pupil_center
+
+def import_saccades(session: str, filename="saccades.txt"):
+    """
+    Parameters:
+    - session : str
+    - filename : str
+    
+    Returns:
+    - data : dict
+    """
+
+    data = {"temporal": None, "nasal": None}
+    current_section = None
+    filename="saccades.txt"
+
+    with open(filename, "r") as f:
+        for line in f:
+            line = line.strip()
+
+            # Skip blank lines
+            if not line:
+                continue
+
+            # Detect section headers
+            if line == '"temporal"' or line == '"nasal"':
+                current_section = line.strip('"')
+                continue
+
+            # Only parse lines inside a section
+            if current_section:
+                # Split by comma and strip spaces
+                parts = [p.strip() for p in line.split(",")]
+
+                # First element is the session string
+                row_session = parts[0]
+
+                if row_session == session:
+                    # The rest are integers (saccade times)
+                    values = [int(x) for x in parts[1:]]
+                    data[current_section] = values
+
+    return data
+
 
 def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
                camara_fs = 200):
@@ -967,6 +958,22 @@ def plot_angle(pc_angles):
         ax.plot([a, a], [0, 1], alpha=0.7, color="black")
     
     ax.set_yticklabels([])
+    plt.show()
+    
+def plot_event(events, b, name, win = [-0.25, 0.25], camara_fs=200):
+    
+    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
+    tib = np.arange(win[0]*camara_fs, 0, dtype=int)
+    tw = tiw / camara_fs
+
+    for e in events:
+        event_b = b[e + tiw] - np.mean(b[e + tib])
+        plt.plot(tw, event_b, color="black", alpha=0.6)
+        
+    plt.xlabel("time [s]")
+    plt.ylabel(name)
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
     plt.show()
     
 def plot_pca(tw, pca_pc, colors, multi_d=False):

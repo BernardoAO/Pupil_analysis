@@ -62,7 +62,7 @@ def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name,
                           center_edges, plot_name, save_path,clim=[-1,1])
 
 def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes, 
-                     sync_cam, c_types, save_path, colors):
+                     sync_cam, c_types, save_path, cluster_type, colors):
     
     # Plot saccade direction
     hf.plot_event(saccades["temporal"], pupil_center[0,:], "x coordinate")
@@ -90,10 +90,11 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, multi_d=True)
     
     # Response times
-    rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], thres=1.5)
+    rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], thres=0.15)
+    rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], thres=0.15)
     
     edges = np.arange(-0.2, 1, 0.01)
-    hf.plot_metric_typ_cum(rts_sc_t, cluster_type, colors, edges, "rts", save_path)
+    hf.plot_metric_typ_cum(rts_sc_n, cluster_type, colors, edges, "rts", save_path)
     
 
 def main():
@@ -161,26 +162,9 @@ def main():
         saccade_analysis(saccades, firing_rate, valid_spiketimes, sync_cam, 
                          c_types, save_path, colors)
 
-def plot_event(events, b, name, win = [-0.25, 0.25], camara_fs=200):
-    
-    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
-    tib = np.arange(win[0]*camara_fs, 0, dtype=int)
-    tw = tiw / camara_fs
 
-    for e in events:
-        event_b = b[e + tiw] - np.mean(b[e + tib])
-        plt.plot(tw, event_b, color="black", alpha=0.6)
-        
-    plt.xlabel("time [s]")
-    plt.ylabel(name)
-    for s in ['right', 'top']:
-        plt.gca().spines[s].set_visible(False)
-    plt.show()
-
-# check saccades 14 nasal and 2 temporal
 if __name__ == "__main__":
-    #main()
-
+    main()
     
 
 

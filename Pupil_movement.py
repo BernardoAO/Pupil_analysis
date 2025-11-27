@@ -3,7 +3,7 @@
 import numpy as np
 import os
 import pickle
-from tqdm import tqdm
+import pandas as pd
 #import matplotlib.pyplot as plt
 import scipy.signal as signal
 import Helper_functions as hf
@@ -19,40 +19,47 @@ smooth_window = 10
 output_variables = ["session", "awake","ROIs_smooth", "pupil_center", 
                     "pupil_size", "saccade_indx"]
 
-if os.path.isfile(pd_path):
-    pupil_data_all = np.load(pd_path, allow_pickle=True).item()
-else:
-    pupil_data_all = hf.create_pupil_data(output_variables)
-
 os.chdir(data_path)
-all_files = [f for f in os.listdir() if f[-11:] == "full.pickle"]
+all_exp = [d for d in os.listdir()]
 
-work_files = all_files
+work_exp = ["2023-04-18_12-10-34"]
 
-for file in tqdm(work_files, desc="Files processed"):
-    try:
-        session = file[5:24]
-        exp = [exp for exp in pupil_data_all 
-               if pupil_data_all[exp]["session"].eq(session).any()][0]
-        pupil_data = pupil_data_all[exp]
+for exp in work_exp:
+    
+    # Import or create pupil_data
+    os.chdir(exp)    
+    sessions_files = [f for f in os.listdir() if f[-11:] == "full.pickle"]
+    
+    pupil_data_path = os.path.join(save_path, "pupil_data_" + exp + ".pkl")
+    if os.path.isfile(pupil_data_path):
+        pupil_data = pd.read_pickle(pupil_data_path)
+    else:
+        pupil_data_dic = {"session": [file[5:24] for file in sessions_files],
+                          "awake": [1 for file in sessions_files]}
+        for var in output_variables:
+            if var != "session" and var != "awake":
+                pupil_data_dic[var] = [np.array([])] * len(sessions_files)
+
+        pupil_data = pd.DataFrame(pupil_data_dic)
+    
+    for file in sessions_files:
         
         ## Import data
+        session = file[5:24]
         with open(file, 'rb') as f:
-            data = pickle.load(f)
-    
-        n_frames = data["metadata"]['nframes']
+            DLC_data = pickle.load(f)
+        
+        n_frames = DLC_data["metadata"]['nframes']
         tv = np.arange(0, n_frames / fps, 1 / fps)
         ROIs = np.zeros((n_pupil + n_eyelid, 2, n_frames)) # 12, (x,y), n_frames
         confidence = np.zeros((n_pupil + n_eyelid, n_frames)) 
-        keys = list(data.keys())
+        keys = list(DLC_data.keys())
     
         for frame in range(n_frames):
             frame_name = keys[frame + 1]
-            ROI = np.array(data[frame_name]['coordinates']).reshape(n_pupil + n_eyelid, 2)
+            ROI = np.array(DLC_data[frame_name]['coordinates']).reshape(n_pupil + n_eyelid, 2)
             ROIs[:,:,frame] = ROI
-            confidence[:,frame] = np.squeeze(np.array(data[frame_name]['confidence']))
-        
-        
+            confidence[:,frame] = np.squeeze(np.array(DLC_data[frame_name]['confidence']))
         
         ## Time smooth
         ROIs_smooth = hf.time_smooth_ROI(ROIs, smooth_window)
@@ -62,7 +69,7 @@ for file in tqdm(work_files, desc="Files processed"):
         
         # Exceptios
         ROIs_smooth = hf.handle_exceptions(ROIs_smooth, tv, session)
-
+    
         ## Get size
         eyelids_mean = np.nanmean(ROIs_smooth[n_pupil:,:,:],axis=2)
         eye_lenght = np.linalg.norm(eyelids_mean[1,:] - eyelids_mean[3,:])
@@ -80,7 +87,7 @@ for file in tqdm(work_files, desc="Files processed"):
                                            pupil_size_clean * eye_lenght)
         
         ## Get saccades
-        saccade_indx = [] # manual saccades used instead
+        saccade_indx = hf.import_saccades(session, exp)
         
         # Plot
         hf.plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
@@ -94,8 +101,8 @@ for file in tqdm(work_files, desc="Files processed"):
         pupil_data.at[row_index, "pupil_center"] = pupil_center
         pupil_data.at[row_index, "pupil_size"] = pupil_size
         pupil_data.at[row_index, "saccade_indx"] = saccade_indx
-    except:
-        tqdm.write(" Error when processing file " + file)
+    
+    os.chdir("..")
 
 exp_pd_path =  os.path.join(save_path, "pupil_data_" + exp + ".pkl")
 pupil_data.to_pickle(exp_pd_path)
