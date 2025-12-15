@@ -3,14 +3,12 @@
 import numpy as np
 import os
 import pickle
-import pandas as pd
 #import matplotlib.pyplot as plt
 import scipy.signal as signal
 import Helper_functions as hf
 
 data_path = r"D:\NP data\Bernardo_awake_cx\DLC\left_eye\labeled_videos"
-save_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data"
-pd_path = os.path.join(save_path,"pupil_data.npy")
+save_path = r"D:\NP data\Bernardo_awake_cx\Results"
 
 n_pupil = 8
 n_eyelid = 4
@@ -22,7 +20,7 @@ output_variables = ["session", "awake","ROIs_smooth", "pupil_center",
 os.chdir(data_path)
 all_exp = [d for d in os.listdir()]
 
-work_exp = ["2023-04-18_12-10-34"]
+work_exp = all_exp#['2023-04-18_12-10-34']
 
 for exp in work_exp:
     
@@ -30,17 +28,8 @@ for exp in work_exp:
     os.chdir(exp)    
     sessions_files = [f for f in os.listdir() if f[-11:] == "full.pickle"]
     
-    pupil_data_path = os.path.join(save_path, "pupil_data_" + exp + ".pkl")
-    if os.path.isfile(pupil_data_path):
-        pupil_data = pd.read_pickle(pupil_data_path)
-    else:
-        pupil_data_dic = {"session": [file[5:24] for file in sessions_files],
-                          "awake": [1 for file in sessions_files]}
-        for var in output_variables:
-            if var != "session" and var != "awake":
-                pupil_data_dic[var] = [np.array([])] * len(sessions_files)
-
-        pupil_data = pd.DataFrame(pupil_data_dic)
+    pupil_data_path, pupil_data = hf.create_pupil_data(exp, save_path, 
+                                     sessions_files, output_variables)
     
     for file in sessions_files:
         
@@ -94,18 +83,17 @@ for exp in work_exp:
                               eyelids_mean, saccade_indx, session, save_path)
     
         ## Save
-        mask = pupil_data[exp]["session"] == session
+        mask = pupil_data["session"] == session
     
-        row_index = pupil_data[exp].loc[mask].index[0]
+        row_index = pupil_data.loc[mask].index[0]
         pupil_data.at[row_index, "ROIs_smooth"] = ROIs_smooth
         pupil_data.at[row_index, "pupil_center"] = pupil_center
-        pupil_data.at[row_index, "pupil_size"] = pupil_size
+        pupil_data.at[row_index, "pupil_size"] = pupil_size_clean
         pupil_data.at[row_index, "saccade_indx"] = saccade_indx
     
-    os.chdir("..")
 
-exp_pd_path =  os.path.join(save_path, "pupil_data_" + exp + ".pkl")
-pupil_data.to_pickle(exp_pd_path)
+    pupil_data.to_pickle(pupil_data_path)
+    os.chdir("..")
 
 
 

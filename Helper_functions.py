@@ -13,10 +13,31 @@ from matplotlib import colors as pltcolors
 
 from joblib import Parallel, delayed
 
+def create_pupil_data(exp, save_path, sessions_files, output_variables):
+    """
+    Creates a pd array or reads it in case it already exists.
+    """
+    pupil_data_path = os.path.join(save_path, "pupil_data",
+                                   "pupil_data_" + exp + ".pkl")
+    if os.path.isfile(pupil_data_path) and False:
+        pupil_data = pd.read_pickle(pupil_data_path)
+    else:
+        pupil_data_dic = {"session": [file[5:24] for file in sessions_files],
+                          "awake": [1 for file in sessions_files]}
+        for var in output_variables:
+            if var != "session" and var != "awake":
+                pupil_data_dic[var] = [np.array([])] * len(sessions_files)
+    
+        pupil_data = pd.DataFrame(pupil_data_dic)
+    
+    return pupil_data_path, pupil_data
+
 def handle_exceptions(ROIs_smooth, tv, session):
     if session == "2023-03-16-11-14-37":
         mask = tv < 0.15 * 60
         ROIs_smooth[:,:,mask] = np.nan
+    if session[:10] == "2023-04-18":
+        ROIs_smooth = np.flip(ROIs_smooth, axis=1)
     return ROIs_smooth
 
 def time_smooth_ROI(ROIs, win, confidence = [], con_thr = 0.8):
@@ -135,7 +156,7 @@ def get_pupil_center(ROIs_smooth, pupil_size, centered=False):
     else:
         return pupil_center
 
-def import_saccades(session: str, filename="saccades.txt"):
+def import_saccades(session, filename="saccades.txt"):
     """
     Parameters:
     - session : str
@@ -177,6 +198,31 @@ def import_saccades(session: str, filename="saccades.txt"):
 
     return data
 
+def get_stims(Spke_Bundle):
+    """
+    Visual stimuli for each recording.
+
+    Parameters:
+    - Spke_Bundle : dict
+    
+    Returns:
+    - vis_stim : list
+    - colors : list
+
+    """
+    vis_stim_all = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
+                "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
+                "csd", "chirp"]
+    cmap = plt.get_cmap('jet', len(vis_stim_all))    
+    
+    vis_stim = []
+    colors = []
+    for i, s in enumerate(vis_stim_all):
+        if s in Spke_Bundle["events"]:
+            vis_stim.append(s)
+            colors.append(cmap(i))
+            
+    return vis_stim, colors
 
 def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
                camara_fs = 200):
@@ -259,35 +305,32 @@ def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
     exp_pd_path =  os.path.join(pupil_data_path, "pupil_data_" + exp + ".pkl")
     pupil_data = pd.read_pickle(exp_pd_path)
     
-    # Exceptions
-    if exp == '2023-03-16_12-16-07':
-        pupil_data = pupil_data.iloc[1:]
-    
     # Size
-    pupil_sizes_pd = pupil_data.loc[pupil_data['awake'], 'pupil_size']
+    pupil_sizes_pd = pupil_data['pupil_size']
     pupil_size = np.concatenate(pupil_sizes_pd.to_numpy())
     n_points_ses = [len(s) for s in pupil_sizes_pd]
     n_frames = sum(n_points_ses)
     
     # Center
-    pupil_center_pd = pupil_data.loc[pupil_data['awake'], 'pupil_center']
+    pupil_center_pd = pupil_data['pupil_center']
     pupil_center = np.concatenate(pupil_center_pd.to_numpy(), axis = 1)
     
     # Saccades
-    saccades_pd = pupil_data.loc[pupil_data['awake'], 'saccade_indx']
+    saccades_pd = pupil_data['saccade_indx'].tolist()
     saccades = {'temporal': np.array([]),
                 'nasal': np.array([])}
     off_set = 0
     for s in range(len(saccades_pd)):
-        temporal_s = np.array(saccades_pd[s+1]["temporal"]) + off_set
+        temporal_s = np.array(saccades_pd[s]["temporal"]) + off_set
         saccades["temporal"] = np.append(saccades["temporal"], temporal_s)
         
-        nasal_s = np.array(saccades_pd[s+1]["nasal"]) + off_set
+        nasal_s = np.array(saccades_pd[s]["nasal"]) + off_set
         saccades["nasal"] = np.append(saccades["nasal"], nasal_s)
         
         off_set += n_points_ses[s]
     saccades["temporal"] = saccades["temporal"].astype(np.int64)
     saccades["nasal"] = saccades["nasal"].astype(np.int64)
+    
     # Period
     sync_all_cam = Spke_Bundle["Synchronization_TTLs"]["Sync_cam"] / fs
     sync_cam = sync_all_cam[:n_frames]
@@ -298,7 +341,6 @@ def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
         p_times = Spke_Bundle["events"][period] / fs
         start, end = p_times[[0, -1]]
         mask = (sync_cam > start) & (sync_cam <= end)
-        
 
     return sync_cam[mask], pupil_size[mask], pupil_center[:,mask], saccades
 
@@ -632,7 +674,13 @@ def neuron_PCA(fr, types, n_components = 1):
 
 def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
                       eyelids_mean, saccade_indx, name, sp):
-
+    colors = {"size":"#9b5de5",
+              "size_clean":"#D3B9F4",
+              "x":"#00bbf9",
+              "y":"#00f5d4",
+              "temporal":"navy",
+              "nasal":"violet"}
+    
     tv = tv / 60 # minutes
     
     fig = plt.figure(figsize=(15, 8))
@@ -642,8 +690,8 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     ax3 = fig.add_subplot(gs[:, 1])
 
     # First subplot: pupil size    
-    ax1.plot(tv, pupil_size, color="#9b5de5")
-    ax1.plot(tv, pupil_size_clean, color="#D3B9F4")
+    ax1.plot(tv, pupil_size, color=colors["size"])
+    ax1.plot(tv, pupil_size_clean, color=colors["size_clean"])
 
     ax1.set_xlim([tv[0],tv[-1]])
     ax1.set_ylim([0,0.5])
@@ -652,12 +700,15 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     ax1.spines[['right', 'top']].set_visible(False)
     
     # Second subplot: pupil center
-    ax2.plot(tv, pupil_center[0, :], color="#00bbf9", label="x")
-    ax2.plot(tv, pupil_center[1, :], color="#00f5d4", label="y")
+    ax2.plot(tv, pupil_center[0, :], color=colors["x"], label="x")
+    ax2.plot(tv, pupil_center[1, :], color=colors["y"], label="y")
     
     ylim = ax2.get_ylim()
-    for idx in saccade_indx:
-        ax2.vlines(tv[idx], ylim[0], ylim[1], colors="k", linestyles="--", alpha=0.3)
+    for s in ["temporal","nasal"]:
+        saccades = saccade_indx[s]
+        for idx in saccades:
+            ax2.vlines(tv[idx], ylim[0], ylim[1], 
+                       colors=colors[s], linestyles="--")
     ax2.set_ylim(ylim)
     
     ax2.set_xlim([tv[0], tv[-1]])
@@ -683,16 +734,42 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
 
-def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods, fs = 30000):
-    vis_stim = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
-                "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
-                "csd", "chirp"] 
-    vis_name = ["Sp.N.light", "Sp.N.dark", "Mov.bars",
-                "Nat.Mov.", "Nat.Mov.sw", "Nat.Mov.sc",
-                "CSD", "Chirp","grey"]
-    cmap = plt.get_cmap('jet', len(vis_stim))
-    colors = [cmap(i) for i in range(len(vis_stim))]
-    colors.append((0.5, 0.5, 0.5, 0.5))
+def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, 
+             name, sp, fs = 30000, y = 1.0, lw=0.25):
+    
+    # Visual stimulus
+    ns = len(vis_stim)
+    for s, stim in enumerate(vis_stim):
+        times = Spke_Bundle["events"][stim] / fs
+        times = (times - sync_cam[0]) / 60
+        plt.vlines(times, 1 - s / ns, 1 - (s + 1) / ns,
+                   color=colors[s], label=vis_stim[s], linewidth=lw)
+    
+    # Camaras
+    change_i = np.argwhere(np.diff(sync_cam) > 5).squeeze()
+    periods_i = [[0, change_i[0]]] 
+    for i in range(len(change_i)-1):
+        periods_i.append([change_i[i] + 1, change_i[i+1]])
+    periods_i.append([change_i[-1] + 1, -1])
+    periods = np.array([sync_cam[idx] for idx in periods_i])
+    periods = (periods - sync_cam[0]) / 60
+    
+    cmap = plt.get_cmap('Greys', periods.shape[0]+1)
+    colors = [cmap(i+1) for i in range(periods.shape[0])]
+    for p in range(periods.shape[0]):
+        plt.plot(periods[p,:], [y + 0.1, y + 0.1], color=colors[p])    
+    plt.legend()
+    plt.xlabel("t")
+    plt.yticks([])
+    for s in ['right', 'top', 'left']:
+        plt.gca().spines[s].set_visible(False)
+    plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
+    plt.show()
+
+def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
+                       vis_stim, colors, fs = 30000):
+
+    colors.append((0.5, 0.5, 0.5, 0.5)) # gray / no stim
     
     ps_stim = []
     pc_stim = []
@@ -702,17 +779,21 @@ def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods, fs = 30000):
         mask = (sync_cam > start) & (sync_cam <= end)
         if stim==vis_stim[0]:
             mask_first = (sync_cam < start)
+            
         ps_stim.append(pupil_size[mask])
         pc_stim.append(pupil_center[:,mask])
         
     ps_stim.append(pupil_size[mask_first])
     pc_stim.append(pupil_center[:,mask_first])
+    vis_stim.append("grey")
+    
     # Size
     fig, ax = plt.subplots()
     ax.set_ylabel('Pupil size')
     
-    bplot = ax.boxplot(ps_stim, patch_artist=True, sym="", labels = vis_name)
+    bplot = ax.boxplot(ps_stim, patch_artist=True, sym="", labels = vis_stim)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    ax.set_ylim([0, 0.5])
     for patch, color in zip(bplot['boxes'], colors):
         patch.set_facecolor(color)
         
@@ -721,7 +802,7 @@ def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods, fs = 30000):
     plt.show()
 
     # Position
-    for s in range(len(vis_stim)+1):
+    for s in range(len(vis_stim)):
         plt.subplot(3,3,s+1)
         plt.plot(pc_stim[s][0,:], pc_stim[s][1,:], color=colors[s])
         plt.xticks([])
@@ -765,7 +846,7 @@ def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
 
 def plot_metric_typ_cum(metric, cluster_type, colors, edges, name, sp):
     
-    cluster_type = np.asarray(cluster_type)
+    cluster_type = np.array(cluster_type)
     unique_type = np.unique(cluster_type)
     
     # Hist
@@ -816,43 +897,6 @@ def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):
     plt.tight_layout()
     plt.savefig(os.path.join(sp,"plots", name + "_bin_" + str(plot_bin) +
                              "_CS.svg"))
-    plt.show()
-
-def plot_exp(Spke_Bundle, sync_cam, name, sp, fs = 30000, y = 1.0):
-    
-    vis_stim = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
-                "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
-                "csd", "chirp"] 
-    vis_name = ["□ on light", "□ on dark","Moving bars",
-                "Nat Mov", "Nat Mov swapped", "Nat Mov scrambled",
-                "Current Source Density", "Chirp"]
-    cmap = plt.get_cmap('jet', len(vis_stim))
-    colors = [cmap(i) for i in range(len(vis_stim))]
-    ns = len(vis_stim)
-    for s, stim in enumerate(vis_stim):
-        times = Spke_Bundle["events"][stim] / fs
-        times = (times - sync_cam[0]) / 60
-        plt.vlines(times,1 - s / ns, 1 - (s + 1) / ns,
-                   color=colors[s], label=vis_name[s])
-    
-    change_index = np.argwhere(np.diff(sync_cam) > 5).squeeze()
-    change_t = sync_cam[change_index]
-    periods = np.array([[sync_cam[0],change_t[0]],
-                        [change_t[0] + 1, change_t[1]],
-                        [change_t[1] + 1, sync_cam[-1]]])
-    periods = (periods - sync_cam[0]) / 60
-    
-    cmap = plt.get_cmap('Greys', periods.shape[0]+1)
-    colors = [cmap(i+1) for i in range(periods.shape[0])]
-    for p in range(periods.shape[0]):
-        plt.plot(periods[p,:],[y + 0.1, y + 0.1],color=colors[p])    
-    plt.legend()
-    plt.xlabel("t")
-    #plt.xlim([0,4000])
-    plt.yticks([])
-    for s in ['right', 'top', 'left']:
-        plt.gca().spines[s].set_visible(False)
-    plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
     plt.show()
 
 def plot_windows_and_events(b, sync_cam, event_t=[], pl = 10, ylim = [0, 0.5],
@@ -965,10 +1009,19 @@ def plot_event(events, b, name, win = [-0.25, 0.25], camara_fs=200):
     tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
     tib = np.arange(win[0]*camara_fs, 0, dtype=int)
     tw = tiw / camara_fs
+    
+    if isinstance(events, dict):
+        for e in events["temporal"]:
+            event_b = b[e + tiw] - np.mean(b[e + tib])
+            plt.plot(tw, event_b, color="navy")
+        for e in events["nasal"]:
+            event_b = b[e + tiw] - np.mean(b[e + tib])        
+            plt.plot(tw, event_b, color="violet")    
 
-    for e in events:
-        event_b = b[e + tiw] - np.mean(b[e + tib])
-        plt.plot(tw, event_b, color="black", alpha=0.6)
+    else:
+        for e in events:
+            event_b = b[e + tiw] - np.mean(b[e + tib])
+            plt.plot(tw, event_b, color="black", alpha=0.6)
         
     plt.xlabel("time [s]")
     plt.ylabel(name)
@@ -1017,4 +1070,29 @@ def plot_pca(tw, pca_pc, colors, multi_d=False):
         plt.tight_layout()
         plt.show()
 
+def plot_types(experiments, all_types, colors, sp = "none"):
+    
+    exp = [e[:10] for e in experiments]
+    all_counts = {n_type: [] for n_type in colors.keys()}
+    for e in range(len(exp)):
+        unique, counts = np.unique(all_types[e], return_counts=True)
+        for n,n_type in enumerate(unique):
+            all_counts[n_type].append(counts[n])     
 
+    fig, ax = plt.subplots()
+    bottom = np.zeros(len(exp))
+    
+    for types, color in colors.items():
+        p = ax.bar(exp, all_counts[types], bottom=bottom, color=color)
+        bottom += all_counts[types]
+    
+        ax.bar_label(p, label_type='center', color="white")
+    
+    ax.set_ylabel('n units')
+    for s in ['right', 'top']:
+        ax.spines[s].set_visible(False)    
+    
+    if not sp == "none":
+        plt.savefig(os.path.join(sp,"plots", "n neurons.svg"))
+    plt.show()
+    
