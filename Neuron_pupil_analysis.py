@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import Helper_functions as hf
-#assert False
+assert False
 
 # TODO saccades per stimuli
 
@@ -68,7 +68,8 @@ def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name,
                           center_edges, plot_name, save_path,clim=[-1,1])
 
 def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes, 
-                     sync_cam, c_types, save_path, cluster_type, colors):    
+                     sync_cam, c_types, save_path, cluster_type, colors,
+                     win = [-0.25,1], plot=False):    
     
     saccades_all = np.concatenate((saccades["temporal"], 
                                 saccades["nasal"]), axis=0)
@@ -76,28 +77,21 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
                   "violet" for sc in range(len(saccades_all))]
     
     # Get saccade align fr
-    win = [-0.25,1]
     fr_sc_t, tw = hf.get_fr_aligned(firing_rate, saccades["temporal"], win=win)    
     fr_sc_n, tw = hf.get_fr_aligned(firing_rate, saccades["nasal"], win=win)
     
     fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
     
-    hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
-                tw, fr_sc, c_types, save_path, name="fr_man_sac")
-    
-    # PCA
-    pca_pc = hf.neuron_PCA(fr_sc, c_types, n_components=10)
-    
-    hf.plot_pca(tw, pca_pc[:,:3,:,:], colors)
-    hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, multi_d=True)
-    
-    # Response times
     rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], thres=0.15)
     rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], thres=0.15)
+    #TODO biggest rts
+    rts_sc = [rts_sc_t, rts_sc_n]
     
-    edges = np.arange(-0.2, 1, 0.01)
-    hf.plot_metric_typ_cum(rts_sc_n, cluster_type, colors, edges, "rts", save_path)
+    if plot:
+        hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
+                    tw, fr_sc, c_types, save_path, name="fr_man_sac.svg")
     
+    return tw, fr_sc, rts_sc
 
 #def main():
     
@@ -114,14 +108,17 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 # Parameters
 period =  "all" # "chirp"
 ps_corr_edges = np.arange(-0.3,0.32,0.010)
+units_for_plot = [] #[30,176,355]
 
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-#experiments = [experiments[2]]
+#experiments = [experiments[0]]
 
 all_types = []
 all_ps_corr = []
+all_fr_sc = []
+all_rts_sc = []
 
 # file loop
 for exp in tqdm(experiments, desc="Files processed"):
@@ -142,25 +139,24 @@ for exp in tqdm(experiments, desc="Files processed"):
     
     #hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, save_path)
     #hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
-    #                      Spke_Bundle["events"], vis_stim, stim_colors)
-    #hf.plot_event(saccades, pupil_center[0,:], "x coordinate")
+    #                      Spke_Bundle["events"], vis_stim, stim_colors, exp, save_path)
+    #hf.plot_event(saccades, pupil_center[0,:], "x coordinate", exp, save_path)
     
+     
     # get valid clusters
-    valid_cluster_indx, cluster_type = \
-        hf.get_valid_cluster(Spke_Bundle, SIN_data)            
-    valid_spiketimes = [spiketimes[i] for i in valid_cluster_indx]
-    c_types = np.array([colors[n] for n in cluster_type])
+    valid_spiketimes, cluster_type, c_types = \
+        hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors)            
     
     ## Firing rate
     
     firing_rate, z_fr = hf.get_firing_rate(valid_spiketimes, sync_cam)
-        
+    
+    """   
     ## Pupil size
     
     # correlation
     neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
                                  ps_corr_edges, plot_name, save_path)
-    """
     
     # size change events
     ps_events_analysis(pupil_size, z_fr, c_types, umap_data_path="none")
@@ -170,27 +166,47 @@ for exp in tqdm(experiments, desc="Files processed"):
     # similarity
     pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
                 save_path)
-    
-    # saccades    
-    saccade_analysis(saccades, firing_rate, valid_spiketimes, sync_cam, 
-                     c_types, save_path, colors)
     """
+    # saccades    
+    tw, fr_sc, rts_sc = saccade_analysis(saccades, pupil_center, firing_rate, 
+                                         valid_spiketimes, sync_cam, c_types, 
+                                         save_path, cluster_type, colors)
+    
     # save
-    all_types.append(cluster_type)
-    all_ps_corr.append(neu_pupil_corr)
+    #all_types.append(cluster_type)
+    #all_ps_corr.append(neu_pupil_corr)
+    #all_fr_sc.append(fr_sc)
+    all_rts_sc.append(rts_sc)
 
-# all plots
+## All plots
 
-#hf.plot_types(experiments, all_types, colors, save_path)
-
-all_ps_corr = np.concatenate(all_ps_corr)
 all_types_cat = [x for exp in all_types for x in exp]
+c_types_all = np.array([colors[n] for n in all_types_cat])
+'''
+# n 
+hf.plot_types(experiments, all_types, colors, save_path)
+
+# ps corr
+all_ps_corr = np.concatenate(all_ps_corr)
 hf.plot_metric_typ_cum(all_ps_corr, all_types_cat, colors, 
          ps_corr_edges, "all exp", save_path)
 
+# pc PCA
+all_fr_sc_cat = np.concatenate(all_fr_sc, axis = 0)
+pca_pc = hf.neuron_PCA(all_fr_sc_cat, c_types_all, n_components=10)
+hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, save_path)
+'''
+# pc response times
+all_rts_sc = np.concatenate(all_rts_sc)
+edges = np.arange(-0.2, 1, 0.01)
+hf.plot_metric_typ_cum(all_rts_sc, all_types_cat, colors, edges, 
+                       "rts", save_path)
+
+
+
 #if __name__ == "__main__":
 #    main()
-    
+
 
 
 

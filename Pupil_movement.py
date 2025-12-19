@@ -20,7 +20,7 @@ output_variables = ["session", "awake","ROIs_smooth", "pupil_center",
 os.chdir(data_path)
 all_exp = [d for d in os.listdir()]
 
-work_exp = all_exp#['2023-04-18_12-10-34']
+work_exp = ['2023-04-18_12-10-34']
 
 for exp in work_exp:
     

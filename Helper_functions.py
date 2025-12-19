@@ -344,16 +344,20 @@ def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
 
     return sync_cam[mask], pupil_size[mask], pupil_center[:,mask], saccades
 
-def get_valid_cluster(Spke_Bundle, SIN_data):
+def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors,
+                      units_for_plot=[]):
     """
     Gets valid units: (TCA, NW, BW).
     Parameters:
     - Spke_Bundle: Spike bundle dictionary
     - SIN_data: Supposedly inhibitory neuron dictionary
+    - spiketimes: list, length N
+    - colors: dict
 
     Returns:
-    - valid_cluster_indx: indices where valid_cluster is True
-    - cluster_type: Name of each valid cluster (TCA, NW, BW)
+    - valid_spiketimes: list, lenght n
+    - cluster_type: list, lenght n, name of each valid cluster (TCA, NW, BW)
+    - c_types: np.array, shape [n]
     """
 
     valid_cluster_indx = []
@@ -373,7 +377,15 @@ def get_valid_cluster(Spke_Bundle, SIN_data):
             cluster_type.append("TCA")
             valid_cluster_indx.append(neu_indx)
     
-    return valid_cluster_indx, cluster_type
+    valid_spiketimes = [spiketimes[i] for i in valid_cluster_indx]
+    
+    if units_for_plot:
+        valid_spiketimes = [valid_spiketimes[u] for u in units_for_plot]
+        cluster_type = [cluster_type[u] for u in units_for_plot]
+        
+    c_types = np.array([colors[n] for n in cluster_type])
+    
+    return valid_spiketimes, cluster_type, c_types
 
 def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
     """
@@ -767,7 +779,7 @@ def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors,
     plt.show()
 
 def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
-                       vis_stim, colors, fs = 30000):
+                       vis_stim, colors,  exp, sp, fs = 30000):
 
     colors.append((0.5, 0.5, 0.5, 0.5)) # gray / no stim
     
@@ -799,14 +811,17 @@ def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
         
     for s in ['right', 'top']:
         ax.spines[s].set_visible(False)
+    plt.savefig(os.path.join(sp,"plots", exp + "_ps_stim.svg"))
     plt.show()
 
     # Position
     for s in range(len(vis_stim)):
         plt.subplot(3,3,s+1)
-        plt.plot(pc_stim[s][0,:], pc_stim[s][1,:], color=colors[s])
+        plt.plot(pc_stim[s][0,:], pc_stim[s][1,:], color=colors[s], 
+                 linewidth=0.5)
         plt.xticks([])
         plt.yticks([])
+    plt.savefig(os.path.join(sp,"plots", exp + "_pc_stim.svg"))
     plt.show()
 
 def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
@@ -951,7 +966,7 @@ def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):
             plt.close(fig)
 
 def plot_raster(st, sync_cam, align_indx, colors, 
-                tw, mean_fr, c_types, sp="none", name="fr_aligned"):
+                tw, mean_fr, c_types, sp="none", name="fr_aligned.png"):
     
     for n, spikes in enumerate(st):
 
@@ -981,8 +996,7 @@ def plot_raster(st, sync_cam, align_indx, colors,
         if sp == "none":
             plt.show()
         else:
-            plt.savefig(os.path.join(sp,"plots", "Neurons",
-                                     str(n) + name +".png"))
+            plt.savefig(os.path.join(sp,"plots", "Neurons", str(n) + name))
             plt.close(fig)
         
 def plot_umap(embedding, emb_p, c_types, mean_emb_c):
@@ -1004,7 +1018,7 @@ def plot_angle(pc_angles):
     ax.set_yticklabels([])
     plt.show()
     
-def plot_event(events, b, name, win = [-0.25, 0.25], camara_fs=200):
+def plot_event(events, b, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
     
     tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
     tib = np.arange(win[0]*camara_fs, 0, dtype=int)
@@ -1027,28 +1041,40 @@ def plot_event(events, b, name, win = [-0.25, 0.25], camara_fs=200):
     plt.ylabel(name)
     for s in ['right', 'top']:
         plt.gca().spines[s].set_visible(False)
+    plt.savefig(os.path.join(sp,"plots", exp + name + ".svg"))
     plt.show()
     
-def plot_pca(tw, pca_pc, colors, multi_d=False):
+def plot_pca(tw, pca_pc, colors, sp, multi_d=False, name="PCA_sc.svg"):
     types = colors.keys()
     if not multi_d:
-        for c in range(pca_pc.shape[1]):        
-            fig, axes = plt.subplots(len(types), 1, figsize=(10, 8))
-            for ti, typ in enumerate(types):
-                axes[ti].plot(tw, pca_pc[ti,c,:,0], color=colors[typ])
-                axes[ti].plot(tw, pca_pc[ti,c,:,1], color=colors[typ], 
-                              linestyle="dashed")
-                ylim = axes[ti].get_ylim()
-                axes[ti].vlines(0, ylim[0], ylim[1], 
+        for ti, typ in enumerate(types):       
+            
+            fig, axes = plt.subplots(pca_pc.shape[1], 1, figsize=(10, 8))
+            for c in range(pca_pc.shape[1]): 
+                
+                axes[c].plot(tw, pca_pc[ti,c,:,0], color="navy")
+                axes[c].plot(tw, pca_pc[ti,c,:,1], color="violet")
+                
+                ylim = axes[c].get_ylim()
+                axes[c].vlines(0, ylim[0], ylim[1], 
                                 colors="k", linestyles="--", alpha=0.3)
-                axes[ti].set_ylabel("PC" + str(c+1))
-                if ti < len(types) - 1:
-                    axes[ti].set_xticks([])
+                
+                axes[c].tick_params(axis='y', labelcolor=colors[typ])
+                axes[c].set_ylabel("PC" + str(c+1))
+                if c < pca_pc.shape[1] - 1:
+                    axes[c].set_xticks([])
                 else:
-                    axes[ti].set_xlabel("time [s]")
+                    axes[c].set_xlabel("time [s]")
+                    axes[c].tick_params(axis='x', labelcolor=colors[typ])
+                    
                 for s in ['right', 'top']:
-                    axes[ti].spines[s].set_visible(False)
+                    axes[c].spines[s].set_visible(False)
+                for s in ['left', 'bottom']:
+                    axes[c].spines[s].set_color(colors[typ])
+                    
             plt.tight_layout()
+            plt.savefig(os.path.join(sp,"plots", typ + name))
+
             plt.show()
     else:
         fig, axes = plt.subplots(1, len(types), figsize=(12, 8), 
