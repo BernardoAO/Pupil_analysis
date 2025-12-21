@@ -34,27 +34,21 @@ def ps_analysis(z_fr, pupil_size, cluster_type, colors,
                             plot_name, save_path)
     return neu_pupil_corr
 
-def ps_events_analysis(pupil_size, z_fr, c_types, umap_data_path="none"):
+def ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, c_types, 
+                       exp, save_path, win = [-0.5,2], plot="none"):
     
-    ps_change_fast_indx, _ = hf.get_events(pupil_size)
-    ps_change_slow_indx, _ = hf.get_events(pupil_size, 10)
-    #hf.plot_windows_and_events(pupil_size, sync_cam, sync_cam[ps_change_slow_indx])
-
-    z_fr_ps_slow, tw = hf.get_fr_aligned(z_fr, ps_change_slow_indx)
+    ps_change_indx, _ = hf.get_events(pupil_size, window_pre = 10, rp = 10)
     
-    #np.save(os.path.join(save_path,"z_fr_ps_slow.npy"), z_fr_ps_slow)
+    z_fr_ps, tw = hf.get_fr_aligned(z_fr, ps_change_indx, win = win)
     
-    if not umap_data_path == "none":
-        embedding = np.load(os.path.join(umap_data_path))
+    if plot == "all" or plot == "pupil":
+        hf.plot_windows_and_events(pupil_size, sync_cam, sync_cam[ps_change_indx])
+        hf.plot_event(ps_change_indx, pupil_size, "pupil size", exp, save_path, 
+                      win = win)
         
-        #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path, name="fr_psc_slow")
-        
-        emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
-        mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
-                                                    emb_p, c_types)
-        hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
-    
-        hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
+    if plot == "all" or plot == "raster":
+        hf.plot_raster(valid_spiketimes, sync_cam, ps_change_indx, [],
+                       tw, z_fr_ps, c_types, save_path, name="fr_ps.png")
 
 def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
                 save_path, center_edges = np.arange(105, 145, 5)):
@@ -69,7 +63,7 @@ def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name,
 
 def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes, 
                      sync_cam, c_types, save_path, cluster_type, colors,
-                     win = [-0.25,1], plot=False):    
+                     win = [-0.25,1], plot="none"):    
     
     saccades_all = np.concatenate((saccades["temporal"], 
                                 saccades["nasal"]), axis=0)
@@ -78,16 +72,22 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     
     # Get saccade align fr
     fr_sc_t, tw = hf.get_fr_aligned(firing_rate, saccades["temporal"], win=win)    
-    fr_sc_n, tw = hf.get_fr_aligned(firing_rate, saccades["nasal"], win=win)
-    
+    fr_sc_n, tw = hf.get_fr_aligned(firing_rate, saccades["nasal"], win=win)    
     fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
     
+    # Preferred direction
+    max_fr = np.max(fr_sc, axis=1)
+    pref_sc = np.argmax(max_fr, axis=1)
+    
+    # Response times
     rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], thres=0.15)
     rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], thres=0.15)
-    #TODO biggest rts
-    rts_sc = [rts_sc_t, rts_sc_n]
+    rts_sc = [np.where(pref_sc == 0, rts_sc_t, rts_sc_n), 
+              np.where(pref_sc == 1, rts_sc_t, rts_sc_n)]
     
-    if plot:
+    if plot == "all" or plot == "pupil":
+        hf.plot_event(saccades, pupil_center[0,:], "x coordinate", exp, save_path)
+    if plot == "all" or plot == "raster":
         hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
                     tw, fr_sc, c_types, save_path, name="fr_man_sac.svg")
     
@@ -108,12 +108,12 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 # Parameters
 period =  "all" # "chirp"
 ps_corr_edges = np.arange(-0.3,0.32,0.010)
-units_for_plot = [] #[30,176,355]
+units_for_plot = [48] #ps #[30,176,355] #pc
 
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-#experiments = [experiments[0]]
+experiments = [experiments[0]]
 
 all_types = []
 all_ps_corr = []
@@ -140,7 +140,6 @@ for exp in tqdm(experiments, desc="Files processed"):
     #hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, save_path)
     #hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
     #                      Spke_Bundle["events"], vis_stim, stim_colors, exp, save_path)
-    #hf.plot_event(saccades, pupil_center[0,:], "x coordinate", exp, save_path)
     
      
     # get valid clusters
@@ -151,38 +150,39 @@ for exp in tqdm(experiments, desc="Files processed"):
     
     firing_rate, z_fr = hf.get_firing_rate(valid_spiketimes, sync_cam)
     
-    """   
+       
     ## Pupil size
     
     # correlation
-    neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
-                                 ps_corr_edges, plot_name, save_path)
+    #neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
+    #                             ps_corr_edges, plot_name, save_path)
     
     # size change events
-    ps_events_analysis(pupil_size, z_fr, c_types, umap_data_path="none")
-    
+    ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, c_types,
+                       exp, save_path, plot = "raster")
+    '''
     ## Pupil center
     
     # similarity
     pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
                 save_path)
-    """
+    
     # saccades    
     tw, fr_sc, rts_sc = saccade_analysis(saccades, pupil_center, firing_rate, 
                                          valid_spiketimes, sync_cam, c_types, 
                                          save_path, cluster_type, colors)
     
     # save
-    #all_types.append(cluster_type)
+    all_types.append(cluster_type)
     #all_ps_corr.append(neu_pupil_corr)
     #all_fr_sc.append(fr_sc)
-    all_rts_sc.append(rts_sc)
+    #all_rts_sc.append(rts_sc)
 
 ## All plots
 
 all_types_cat = [x for exp in all_types for x in exp]
 c_types_all = np.array([colors[n] for n in all_types_cat])
-'''
+
 # n 
 hf.plot_types(experiments, all_types, colors, save_path)
 
@@ -191,17 +191,33 @@ all_ps_corr = np.concatenate(all_ps_corr)
 hf.plot_metric_typ_cum(all_ps_corr, all_types_cat, colors, 
          ps_corr_edges, "all exp", save_path)
 
+# ps events
+if not umap_data_path == "none":
+    embedding = np.load(os.path.join(umap_data_path))
+    
+    #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path, name="fr_psc_slow")
+    
+    emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
+    mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
+                                                emb_p, c_types)
+    hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
+
+    hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
+        
 # pc PCA
 all_fr_sc_cat = np.concatenate(all_fr_sc, axis = 0)
 pca_pc = hf.neuron_PCA(all_fr_sc_cat, c_types_all, n_components=10)
 hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, save_path)
-'''
-# pc response times
-all_rts_sc = np.concatenate(all_rts_sc)
-edges = np.arange(-0.2, 1, 0.01)
-hf.plot_metric_typ_cum(all_rts_sc, all_types_cat, colors, edges, 
-                       "rts", save_path)
 
+# pc response times
+#np.save(os.path.join(save_path,"z_fr_ps_slow.npy"), z_fr_ps_slow)    
+
+edges = np.arange(-0.2, 1, 0.01)
+for i in range(2):
+    all_rts_sc_i = np.concatenate([rt[i] for rt in all_rts_sc])
+    hf.plot_metric_typ_cum(all_rts_sc_i, all_types_cat, colors, edges, 
+                           "rts_"+ str(i), save_path)
+'''
 
 
 #if __name__ == "__main__":

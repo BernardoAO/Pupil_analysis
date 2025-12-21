@@ -224,8 +224,8 @@ def get_stims(Spke_Bundle):
             
     return vis_stim, colors
 
-def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
-               camara_fs = 200):
+def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1, 
+               min_a = 0.05, camara_fs = 200):
     """
     Estimates event times of high behavior, by calculating a moving mean in a 
     pre event window, and comparing it to a post event window mean.
@@ -236,6 +236,7 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
     - window_post: float, seconds of post window
     - n_std: float, number of std between pre and post mean to mark an event
     - rp: float, minimum time between events
+    - min_a: float, minimum amplitud
     
     Returns:
     - event_indx : list, length (n_events)
@@ -255,7 +256,7 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
                 tw_post = np.arange(ti, ti+post_i)
                 m_post = np.mean(b[tw_post])
         
-                if m_post > m_pre + n_std*std_pre:
+                if m_post > m_pre + n_std*std_pre and m_post - m_pre > min_a:
                     event_indx.append(ti)
     else:
         for ti in range(pre_i, b.shape[-1]-post_i):
@@ -869,13 +870,15 @@ def plot_metric_typ_cum(metric, cluster_type, colors, edges, name, sp):
         metric_type = metric[(cluster_type == neu_type) & (~np.isnan(metric))]
         plt.hist(metric_type, edges, 
                  density=True, histtype='step', fill=False, cumulative=1,
-                 edgecolor=colors[neu_type], label=f"{neu_type}")
+                 edgecolor=colors[neu_type], 
+                 label=f"{neu_type}" + str(len(metric_type)))
     
     plt.ylim([0,1])
-    plt.xlim([edges[0], edges[-1]])
+    plt.yticks([1, 0.5, 0])
+    plt.xlim([edges[0], edges[-1] - 1e-2])
 
     plt.vlines(0,0,1,colors="gray",linestyles="dashed")
-    plt.xlabel("r coef")
+    plt.xlabel("time [s]")
     plt.ylabel("Cum density")
     plt.legend()
     
@@ -978,14 +981,21 @@ def plot_raster(st, sync_cam, align_indx, colors,
         
         fig, axes = plt.subplots(2,1, figsize=(10, 8))
         
-        axes[0].eventplot(aligned_spikes, colors=colors)  
+        if colors:
+            axes[0].eventplot(aligned_spikes, colors=colors)  
+        else:
+            axes[0].eventplot(aligned_spikes)
+            
         axes[0].set_xlim([tw[0],tw[-1]])
         axes[0].axis('off')
         
-        axes[1].plot(tw, mean_fr[n,:,0], 
-                 color=c_types[n])
-        axes[1].plot(tw, mean_fr[n,:,1], 
-                 color=c_types[n], linestyle="dashed")
+        if mean_fr.ndim == 3:
+            axes[1].plot(tw, mean_fr[n,:,0], color=c_types[n])
+            axes[1].plot(tw, mean_fr[n,:,1], color=c_types[n], 
+                         linestyle="dashed")
+        else:
+            axes[1].plot(tw, mean_fr[n,:], color=c_types[n])
+            
         axes[1].set_xlim([tw[0],tw[-1]])
         axes[1].set_xlabel("time [s]")
         axes[1].set_ylabel("firing rate")
