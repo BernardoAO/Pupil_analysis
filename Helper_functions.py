@@ -1009,13 +1009,15 @@ def plot_raster(st, sync_cam, align_indx, colors,
             plt.savefig(os.path.join(sp,"plots", "Neurons", str(n) + name))
             plt.close(fig)
         
-def plot_umap(embedding, emb_p, c_types, mean_emb_c):
+def plot_umap(embedding, c_types, sp, emb_p = [], mean_emb_c = []):
     plt.scatter(embedding[:,0], embedding[:,1],c=c_types,
                 alpha=0.8, edgecolors="none")
-    plt.scatter(emb_p[:,0], emb_p[:,1],c=mean_emb_c, 
-                marker="s",edgecolors="white")
+    if emb_p:
+        plt.scatter(emb_p[:,0], emb_p[:,1],c=mean_emb_c, 
+                    marker="s",edgecolors="white")
     plt.xlabel("UMAP 1")
     plt.ylabel("UMAP 2")
+    plt.savefig(os.path.join(sp,"plots", "ps_UMAP.svg"))
     plt.show()
 
 def plot_angle(pc_angles):

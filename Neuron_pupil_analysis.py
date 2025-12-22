@@ -48,7 +48,9 @@ def ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, c_types,
         
     if plot == "all" or plot == "raster":
         hf.plot_raster(valid_spiketimes, sync_cam, ps_change_indx, [],
-                       tw, z_fr_ps, c_types, save_path, name="fr_ps.png")
+                       tw, z_fr_ps, c_types, save_path, name="fr_ps.svg")
+        
+    return z_fr_ps
 
 def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
                 save_path, center_edges = np.arange(105, 145, 5)):
@@ -108,15 +110,16 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 # Parameters
 period =  "all" # "chirp"
 ps_corr_edges = np.arange(-0.3,0.32,0.010)
-units_for_plot = [48] #ps #[30,176,355] #pc
+units_for_plot = [] # [48,125,192,242,259,268,368,404] #ps #[30,176,355] #pc
 
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = [experiments[0]]
+#experiments = [experiments[0]]
 
 all_types = []
 all_ps_corr = []
+all_fr_ps = []
 all_fr_sc = []
 all_rts_sc = []
 
@@ -144,7 +147,8 @@ for exp in tqdm(experiments, desc="Files processed"):
      
     # get valid clusters
     valid_spiketimes, cluster_type, c_types = \
-        hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors)            
+        hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors, 
+                             units_for_plot)            
     
     ## Firing rate
     
@@ -158,8 +162,8 @@ for exp in tqdm(experiments, desc="Files processed"):
     #                             ps_corr_edges, plot_name, save_path)
     
     # size change events
-    ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, c_types,
-                       exp, save_path, plot = "raster")
+    z_fr_ps = ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, 
+                                 c_types, exp, save_path, plot = "raster")
     '''
     ## Pupil center
     
@@ -171,10 +175,11 @@ for exp in tqdm(experiments, desc="Files processed"):
     tw, fr_sc, rts_sc = saccade_analysis(saccades, pupil_center, firing_rate, 
                                          valid_spiketimes, sync_cam, c_types, 
                                          save_path, cluster_type, colors)
-    
+    '''
     # save
     all_types.append(cluster_type)
     #all_ps_corr.append(neu_pupil_corr)
+    all_fr_ps.append(z_fr_ps)
     #all_fr_sc.append(fr_sc)
     #all_rts_sc.append(rts_sc)
 
@@ -183,6 +188,7 @@ for exp in tqdm(experiments, desc="Files processed"):
 all_types_cat = [x for exp in all_types for x in exp]
 c_types_all = np.array([colors[n] for n in all_types_cat])
 
+'''
 # n 
 hf.plot_types(experiments, all_types, colors, save_path)
 
@@ -192,26 +198,24 @@ hf.plot_metric_typ_cum(all_ps_corr, all_types_cat, colors,
          ps_corr_edges, "all exp", save_path)
 
 # ps events
-if not umap_data_path == "none":
-    embedding = np.load(os.path.join(umap_data_path))
-    
-    #hf.plot_fr_aligned(tw, z_fr_ps_slow, c_types, save_path, name="fr_psc_slow")
-    
-    emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
-    mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
-                                                emb_p, c_types)
-    hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
+all_fr_ps_cat = np.concatenate(all_fr_ps)
+np.save(os.path.join(save_path,"fr_ps.npy"), all_fr_ps_cat) 
+'''
+embedding = np.load(os.path.join(save_path,"fr_ps_umap.npy"))
 
-    hf.plot_umap(embedding, emb_p, c_types, mean_emb_c)
-        
+hf.plot_umap(embedding, c_types_all,save_path) # emb_p, mean_emb_c
+'''
+emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
+mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
+                                            emb_p, c_types)
+hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c,)
+    
 # pc PCA
 all_fr_sc_cat = np.concatenate(all_fr_sc, axis = 0)
 pca_pc = hf.neuron_PCA(all_fr_sc_cat, c_types_all, n_components=10)
 hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, save_path)
 
 # pc response times
-#np.save(os.path.join(save_path,"z_fr_ps_slow.npy"), z_fr_ps_slow)    
-
 edges = np.arange(-0.2, 1, 0.01)
 for i in range(2):
     all_rts_sc_i = np.concatenate([rt[i] for rt in all_rts_sc])
