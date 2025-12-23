@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import Helper_functions as hf
-assert False
+#assert False
 
 # TODO saccades per stimuli
 
@@ -122,6 +122,8 @@ all_ps_corr = []
 all_fr_ps = []
 all_fr_sc = []
 all_rts_sc = []
+all_ps = []
+all_pc = []
 
 # file loop
 for exp in tqdm(experiments, desc="Files processed"):
@@ -144,7 +146,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     #hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
     #                      Spke_Bundle["events"], vis_stim, stim_colors, exp, save_path)
     
-     
+    '''
     # get valid clusters
     valid_spiketimes, cluster_type, c_types = \
         hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors, 
@@ -164,7 +166,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     # size change events
     z_fr_ps = ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, 
                                  c_types, exp, save_path, plot = "raster")
-    '''
+    
     ## Pupil center
     
     # similarity
@@ -177,16 +179,21 @@ for exp in tqdm(experiments, desc="Files processed"):
                                          save_path, cluster_type, colors)
     '''
     # save
-    all_types.append(cluster_type)
+    
+    #all_types.append(cluster_type)
     #all_ps_corr.append(neu_pupil_corr)
-    all_fr_ps.append(z_fr_ps)
+    #all_fr_ps.append(z_fr_ps)
     #all_fr_sc.append(fr_sc)
     #all_rts_sc.append(rts_sc)
+    all_ps.append(pupil_size)
+    all_pc.append(pupil_center)
 
 ## All plots
 
 all_types_cat = [x for exp in all_types for x in exp]
 c_types_all = np.array([colors[n] for n in all_types_cat])
+
+hf.plot_ps_pc(all_ps, all_pc, save_path)
 
 '''
 # n 
@@ -200,11 +207,11 @@ hf.plot_metric_typ_cum(all_ps_corr, all_types_cat, colors,
 # ps events
 all_fr_ps_cat = np.concatenate(all_fr_ps)
 np.save(os.path.join(save_path,"fr_ps.npy"), all_fr_ps_cat) 
-'''
+
 embedding = np.load(os.path.join(save_path,"fr_ps_umap.npy"))
 
-hf.plot_umap(embedding, c_types_all,save_path) # emb_p, mean_emb_c
-'''
+hf.plot_umap(embedding, c_types_all, save_path) # emb_p, mean_emb_c
+
 emb_p = np.array([[4,-7], [8,-5], [10,-7], [13,-3]]) # w,n,s,e
 mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
                                             emb_p, c_types)

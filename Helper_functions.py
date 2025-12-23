@@ -1,7 +1,8 @@
 ## Helper functions
 ### Bernardo AO
 import numpy as np
-from scipy import interpolate
+from scipy import interpolate 
+import scipy.signal as signal
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
@@ -777,6 +778,34 @@ def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors,
     for s in ['right', 'top', 'left']:
         plt.gca().spines[s].set_visible(False)
     plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
+    plt.show()
+
+def plot_ps_pc(all_ps, all_pc, sp):
+    
+    ps_pc = np.zeros((len(all_ps)))
+    for i in range(len(all_ps)):
+        dps = signal.savgol_filter(all_ps[i], window_length=500, 
+                                  polyorder=2, deriv=1)
+
+        dx = signal.savgol_filter(all_pc[i][0,:], window_length=500, 
+                                  polyorder=2, deriv=1)
+        dy = signal.savgol_filter(all_pc[i][1,:], window_length=500, 
+                                  polyorder=2, deriv=1)
+        dpc = np.sqrt(dx**2 + dy**2)
+
+        ps_pc[i] = np.corrcoef(dps, dpc)[0,1]
+    
+    plt.bar(0, np.mean(ps_pc), color="black")
+    plt.scatter(np.zeros((len(all_ps))), ps_pc,c= 'grey')
+    print(ps_pc)
+    
+    plt.ylabel("r coef")
+    plt.ylim([-0.51,0.51])
+    plt.xticks([])
+    for s in ['right', 'top', 'bottom']:
+        plt.gca().spines[s].set_visible(False)
+    
+    plt.savefig(os.path.join(sp,"plots", "ps_pc_corr.svg"))
     plt.show()
 
 def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
