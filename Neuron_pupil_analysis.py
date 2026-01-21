@@ -10,19 +10,43 @@ import Helper_functions as hf
 # TODO saccades per stimuli
 
 def ps_analysis(z_fr, pupil_size, cluster_type, colors, 
-                ps_corr_edges, plot_name, save_path):
+                ps_corr_edges, plot_name, save_path, plot_example=-1):
     
     # Mean fr vs pupil size
     mean_fr_size, _, s_bins = \
         hf.get_mean_fr_size(z_fr, pupil_size)
     
-    n_plot = 100
-    for n in np.random.randint(0,z_fr.shape[0],n_plot):
-        plt.plot(s_bins, mean_fr_size[n,:], 
-                 alpha=0.2, color=colors[cluster_type[n]])
-    plt.xlabel("pupil size norm")
-    plt.ylabel("z-scored firing rate")
-    plt.show()
+    if plot_example > 0:
+        
+        def plot_ps_exp(z_fr, pupil_size, n):
+            
+            exp_n = z_fr[n,:] #np.argmax(neu_pupil_corr)
+            
+            r = np.random.choice(np.arange(len(exp_n)), down_sample)
+            exp_n_ds = exp_n[r]
+            pupil_size_ds = pupil_size[r]
+            
+            plt.scatter(pupil_size_ds, exp_n_ds, c="black")
+            plt.xlim([0.1,0.3])
+            #plt.ylim([-1,4])
+            
+            plt.gca().spines['left'].set_position('center')
+            plt.gca().spines['bottom'].set_position('center')
+            
+            plt.gca().spines['right'].set_color('none')
+            plt.gca().spines['top'].set_color('none')
+
+            plt.show()
+            
+            n_plot = 100
+            for n in np.random.randint(0,z_fr.shape[0],n_plot):
+                plt.plot(s_bins, mean_fr_size[n,:], 
+                         alpha=0.2, color=colors[cluster_type[n]])
+            plt.xlabel("pupil size norm")
+            plt.ylabel("z-scored firing rate")
+            plt.show()
+            
+        plot_ps_exp(z_fr, pupil_size, plot_example)
         
     # fr pupil size correlation
     neu_pupil_corr = hf.get_correlation(z_fr, pupil_size)
@@ -30,8 +54,8 @@ def ps_analysis(z_fr, pupil_size, cluster_type, colors,
     
     #hf.plot_correlation_hist(neu_pupil_corr, colors, cluster_type, ps_corr_edges, 
     #                        plot_name, save_path)
-    hf.plot_metric_typ_cum(neu_pupil_corr, cluster_type, colors, ps_corr_edges, 
-                            plot_name, save_path)
+    #hf.plot_metric_typ_cum(neu_pupil_corr, cluster_type, colors, ps_corr_edges, 
+    #                        plot_name, save_path)
     return neu_pupil_corr
 
 def ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, c_types, 
@@ -146,7 +170,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     #hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
     #                      Spke_Bundle["events"], vis_stim, stim_colors, exp, save_path)
     
-    '''
+    
     # get valid clusters
     valid_spiketimes, cluster_type, c_types = \
         hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors, 
@@ -160,9 +184,10 @@ for exp in tqdm(experiments, desc="Files processed"):
     ## Pupil size
     
     # correlation
-    #neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
-    #                             ps_corr_edges, plot_name, save_path)
+    neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
+                                 ps_corr_edges, plot_name, save_path)
     
+    '''    
     # size change events
     z_fr_ps = ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, 
                                  c_types, exp, save_path, plot = "raster")
@@ -180,30 +205,36 @@ for exp in tqdm(experiments, desc="Files processed"):
     '''
     # save
     
-    #all_types.append(cluster_type)
-    #all_ps_corr.append(neu_pupil_corr)
+    all_types.append(cluster_type)
+    all_ps_corr.append(neu_pupil_corr)
     #all_fr_ps.append(z_fr_ps)
     #all_fr_sc.append(fr_sc)
     #all_rts_sc.append(rts_sc)
-    all_ps.append(pupil_size)
-    all_pc.append(pupil_center)
+    #all_ps.append(pupil_size)
+    #all_pc.append(pupil_center)
 
 ## All plots
 
 all_types_cat = [x for exp in all_types for x in exp]
 c_types_all = np.array([colors[n] for n in all_types_cat])
 
+'''
+# ps pc correlation
 hf.plot_ps_pc(all_ps, all_pc, save_path)
 
-'''
+
 # n 
 hf.plot_types(experiments, all_types, colors, save_path)
 
+'''
 # ps corr
 all_ps_corr = np.concatenate(all_ps_corr)
 hf.plot_metric_typ_cum(all_ps_corr, all_types_cat, colors, 
          ps_corr_edges, "all exp", save_path)
+    
+hf.get_t_significance(all_ps_corr, all_types_cat)
 
+'''
 # ps events
 all_fr_ps_cat = np.concatenate(all_fr_ps)
 np.save(os.path.join(save_path,"fr_ps.npy"), all_fr_ps_cat) 

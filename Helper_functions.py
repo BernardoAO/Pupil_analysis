@@ -3,6 +3,7 @@
 import numpy as np
 from scipy import interpolate 
 import scipy.signal as signal
+from scipy import stats
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
@@ -683,6 +684,36 @@ def neuron_PCA(fr, types, n_components = 1):
 
     return projection_typ
 
+def get_t_significance(all_ps_corr, all_types_cat, n_p=1000):
+    """
+    Gets significance using a permutation t-test for TCA>NW and NW>BW.
+
+    Parameters:
+    all_ps_corr : np.array, [n]
+    all_types_cat : list, [n]
+    n_p : int
+
+    Returns:
+        None
+    """
+    all_types_cat = np.asarray(all_types_cat)
+    TCA = all_ps_corr[all_types_cat == "TCA"]
+    NW  = all_ps_corr[all_types_cat == "NW"]
+    BW  = all_ps_corr[all_types_cat == "BW"]
+
+    def t_stat(x, y):
+        return np.mean(x) - np.mean(y)
+
+    # TCA vs NW
+    res1 = stats.permutation_test((TCA, NW), statistic=t_stat, n_resamples=n_p,
+                                  alternative="greater", random_state=0)
+
+    # NW vs BW
+    res2 = stats.permutation_test((NW, BW), statistic=t_stat, n_resamples=n_p,
+                                  alternative="greater", random_state=0)
+
+    print(f"TCA > NW: p = {res1.pvalue:.4g}, "
+          f"NW > BW: p = {res2.pvalue:.4g}")
 
 ##m Plotting
 
