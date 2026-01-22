@@ -438,7 +438,8 @@ def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
     
     return firing_rate, z_fr
 
-def get_mean_fr_size(fr, state,  start = 0.12, stop = 0.42, step = 0.02):
+def get_mean_fr_size(fr, state,  start = 0.1, stop = 0.3, step = 0.02, 
+                     per=[5,95]):
     """
     Calculates the mean and std of the firng rate for a given state.
     
@@ -446,10 +447,10 @@ def get_mean_fr_size(fr, state,  start = 0.12, stop = 0.42, step = 0.02):
     - fr: np.ndarray, shape (n_neu, T)
     - state: np.ndarray, shape (T)
     - start, stop, step: float, edges for the bining of the state vector
+    - per: list of two ints
 
     Returns:
-    - mean_fr: np.ndarray, shape (n_neu,n_bins)
-    - std_fr: np.ndarray, shape (n_neu,n_bins)
+    - stats: np.ndarray, shape (n_neu, n_bins, 3) # mean,upper/lower percentil 
     - s_bins: np.ndarray, shape (n_bins)
     """
     
@@ -459,16 +460,16 @@ def get_mean_fr_size(fr, state,  start = 0.12, stop = 0.42, step = 0.02):
     bin_indx = np.digitize(state, s_edges) - 1
     valid_mask = (bin_indx >= 0) & (bin_indx < len(s_bins))
     
-    mean_fr = np.empty((fr.shape[0], len(s_bins)))
-    std_fr = np.empty((fr.shape[0], len(s_bins)))
+    stats = np.empty((fr.shape[0], len(s_bins), 3))
     
     for b in range(len(s_bins)):
         in_bin = (bin_indx == b) & valid_mask
         if np.any(in_bin):
-            mean_fr[:, b] = np.mean(fr[:, in_bin], axis=1)
-            std_fr[:, b] = np.std(fr[:, in_bin], axis=1)
+            stats[:, b, 0] = np.mean(fr[:, in_bin], axis=1)
+            stats[:, b, 1] = np.percentile(fr[:, in_bin], per[0], axis=1)
+            stats[:, b, 2] = np.percentile(fr[:, in_bin], per[1], axis=1)
 
-    return mean_fr, std_fr, s_bins
+    return stats, s_bins
 
 def get_mean_fr_center(fr, pupil_center, edges):
     """
@@ -1027,6 +1028,26 @@ def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):
             plt.savefig(os.path.join(sp,"plots", "Neurons",
                                      str(n) + name +".png"))
             plt.close(fig)
+
+def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp, 
+                ylim=[-1,3]):
+
+    median = stats_fr[n,:,0]
+    p5 = stats_fr[n,:,1]
+    p95 = stats_fr[n,:,2]
+    c = colors[cluster_type[n]]
+    
+    plt.plot(s_bins, median, alpha=0.2, color=c, marker="o")
+    #plt.fill_between(s_bins, p5, p95, alpha=0.3,
+    #                 facecolor=c)
+    #plt.ylim(ylim)            
+    plt.xlabel("pupil size")
+    plt.ylabel("z-scored fr")
+
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
+    plt.show()
 
 def plot_raster(st, sync_cam, align_indx, colors, 
                 tw, mean_fr, c_types, sp="none", name="fr_aligned.png"):

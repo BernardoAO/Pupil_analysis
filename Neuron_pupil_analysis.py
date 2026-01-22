@@ -11,52 +11,28 @@ import Helper_functions as hf
 
 def ps_analysis(z_fr, pupil_size, cluster_type, colors, 
                 ps_corr_edges, plot_name, save_path, plot_example=-1):
-    
-    # Mean fr vs pupil size
-    mean_fr_size, _, s_bins = \
-        hf.get_mean_fr_size(z_fr, pupil_size)
-    
-    if plot_example > 0:
         
-        def plot_ps_exp(z_fr, pupil_size, n):
-            
-            exp_n = z_fr[n,:] #np.argmax(neu_pupil_corr)
-            
-            r = np.random.choice(np.arange(len(exp_n)), down_sample)
-            exp_n_ds = exp_n[r]
-            pupil_size_ds = pupil_size[r]
-            
-            plt.scatter(pupil_size_ds, exp_n_ds, c="black")
-            plt.xlim([0.1,0.3])
-            #plt.ylim([-1,4])
-            
-            plt.gca().spines['left'].set_position('center')
-            plt.gca().spines['bottom'].set_position('center')
-            
-            plt.gca().spines['right'].set_color('none')
-            plt.gca().spines['top'].set_color('none')
+    if plot_example > 0:
 
-            plt.show()
+        # Mean fr vs pupil size
+        stats_fr, s_bins = \
+            hf.get_mean_fr_size(z_fr, pupil_size, per=[20,80])
             
-            n_plot = 100
-            for n in np.random.randint(0,z_fr.shape[0],n_plot):
-                plt.plot(s_bins, mean_fr_size[n,:], 
-                         alpha=0.2, color=colors[cluster_type[n]])
-            plt.xlabel("pupil size norm")
-            plt.ylabel("z-scored firing rate")
-            plt.show()
-            
-        plot_ps_exp(z_fr, pupil_size, plot_example)
+        hf.plot_ps_exp(stats_fr, s_bins, colors, cluster_type, plot_example, 
+                       save_path)
         
     # fr pupil size correlation
     neu_pupil_corr = hf.get_correlation(z_fr, pupil_size)
-    
-    
+
     #hf.plot_correlation_hist(neu_pupil_corr, colors, cluster_type, ps_corr_edges, 
     #                        plot_name, save_path)
     #hf.plot_metric_typ_cum(neu_pupil_corr, cluster_type, colors, ps_corr_edges, 
     #                        plot_name, save_path)
+    
     return neu_pupil_corr
+
+neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
+                             ps_corr_edges, plot_name, save_path, 22)
 
 def ps_events_analysis(pupil_size, z_fr, valid_spiketimes, sync_cam, c_types, 
                        exp, save_path, win = [-0.5,2], plot="none"):
@@ -185,7 +161,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     
     # correlation
     neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
-                                 ps_corr_edges, plot_name, save_path)
+                                 ps_corr_edges, plot_name, save_path, 1)
     
     '''    
     # size change events
