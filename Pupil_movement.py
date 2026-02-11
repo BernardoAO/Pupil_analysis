@@ -90,6 +90,7 @@ for exp in work_exp:
         pupil_data.at[row_index, "pupil_center"] = pupil_center
         pupil_data.at[row_index, "pupil_size"] = pupil_size_clean
         pupil_data.at[row_index, "saccade_indx"] = saccade_indx
+        assert False
     
 
     pupil_data.to_pickle(pupil_data_path)

@@ -767,17 +767,18 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     xedges = np.linspace(np.min(eyelids_mean[:,0]),np.max(eyelids_mean[:,0]),200)
     yedges = np.linspace(np.min(eyelids_mean[:,1]),np.max(eyelids_mean[:,1]),200)
     h = ax3.hist2d(pupil_center[0, :], pupil_center[1, :], bins=[xedges,yedges], 
-                      density=True, cmap='hot_r')
-    ax3.scatter(eyelids_mean[:,0], eyelids_mean[:,1], color="dodgerblue",zorder=2)
+                       cmap='hot_r', norm= 'log') 
+    ax3.scatter(eyelids_mean[1,0], eyelids_mean[1,1], color="dodgerblue",zorder=2)
     cbar = fig.colorbar(h[3], ax=ax3, orientation='horizontal')
     cbar.set_label("Density")
+    h[3].set_clim([1,1e3])
     
     ax3.yaxis.set_inverted(True) 
     ax3.set_axis_off()
     
     fig.suptitle(name)
     plt.tight_layout()
-    plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
+    #plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
 
 def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, 
@@ -867,7 +868,7 @@ def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
     
     bplot = ax.boxplot(ps_stim, patch_artist=True, sym="", labels = vis_stim)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    ax.set_ylim([0, 0.5])
+    #ax.set_ylim([0, 0.5])
     for patch, color in zip(bplot['boxes'], colors):
         patch.set_facecolor(color)
         
