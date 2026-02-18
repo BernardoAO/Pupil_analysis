@@ -546,7 +546,7 @@ def get_similarity(mean_fr, cluster_type, colors):
 
 def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     """
-    Mean firing rate centered on the align indices
+    Firing rate centered on the align indices.
     
     Parameters:    
     fr : np.ndarray, shape (n_neu, T)
@@ -554,6 +554,7 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     win: [pre,post] time window (tw) around the align times [seconds] 
 
     Returns:
+    trial_fr: np.array, shape (n_neu, Tw, n_events)
     mean_fr : np.ndarray, shape (n_neu, Tw)
     tw: np.ndarray, shape (Tw)
     """
@@ -563,11 +564,14 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
     tw = tiw / camara_fs
     
+    trial_fr = np.empty((n_unit, len(tiw), len(align_indx)))
     mean_fr = np.empty((n_unit, len(tiw)))
+        
     for i, ti in enumerate(tiw):
+        trial_fr[:, i, :] = fr[:, align_indx + ti]
         mean_fr[:, i] = np.mean(fr[:, align_indx + ti], axis=1)
 
-    return mean_fr, tw
+    return trial_fr, mean_fr, tw
 
 def get_response_times(fr, align_indx, win=[-1,-0.2, 1], thres=0.1, n_tw = 5,
                        camara_fs = 200):
@@ -656,34 +660,76 @@ def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
         
     return mean_fr_p, mean_c_p
 
-def neuron_PCA(fr, types, n_components = 1):
+def neuron_PCA(fr, types, n_components = 10):
     """
     Applies PCA and projects the data, concatenating time and class for every 
     unit type.
 
     Parameters:
-    fr: np.ndarray, shape (n,t,c)
+    fr: np.ndarray, shape (n, t, c)
     types: np.ndarray, shape (n)
     n_components: int
     
     Returns:
     projection_typ: ndarray, shape (n_typ, n_components, t, c)
+    exp_var: ndarray, shape (n_typ, n_components)
+    w: list of n_typ ndarrays shape (n_components, n_t)
     """
+    types = np.asarray(types)
     n, t, c = fr.shape
     n_typ = len(np.unique(types))
     projection_typ = np.empty((n_typ, n_components, t, c))
+    exp_var = np.empty((n_typ, n_components))
+    w = []
     
     for typ_i, ty in enumerate(np.unique(types)):
+
         fr_ty = fr[ty == types, :, :]
+        n_t = fr_ty.shape[0]
+        X = fr_ty.reshape(n_t, t * c).T
+
+        pca = PCA(n_components=n_components)
+        projection = pca.fit_transform(X)
+        
+        exp_var[typ_i,:] = pca.explained_variance_ratio_
+        w.append(pca.components_)
+        projection_typ[typ_i,:,:,:] = projection.T.reshape(n_components, t, c)
+
+    return projection_typ, exp_var, w
+
+def noise_PCA(fr, trial_fr, types, n_components = 10):
+    """
+    Applies PCA to get the noise variance of data.
+
+    Parameters:
+    fr: np.ndarray, shape (n,t,c)
+    trial_fr: list of c np.ndarray, shape (n,t,tr)
+    types: np.ndarray, shape (n)
+    n_components: int
+    
+    Returns:
+    exp_var: ndarray, shape (n_typ, n_components)
+    """
+    types = np.asarray(types)
+    n_typ = len(np.unique(types))
+    exp_var = np.empty((n_typ, n_components))
+    
+    fr_noise_t = trial_fr[0] - np.expand_dims(fr[:,:, 0], axis=2)
+    fr_noise_n = trial_fr[1] - np.expand_dims(fr[:,:, 1], axis=2)
+    fr_noise = np.concatenate((fr_noise_t, fr_noise_n), axis=2)
+    n, t, tr = fr_noise.shape
+    
+    for typ_i, ty in enumerate(np.unique(types)):
+        fr_ty = fr_noise[ty == types, :, :]
         n = fr_ty.shape[0]
         
-        X = fr_ty.reshape(n, t * c).T
+        X = fr_ty.reshape(n, t * tr).T
 
         pca = PCA(n_components=n_components)
         projection = pca.fit_transform(X)  
-        projection_typ[typ_i,:,:,:] = projection.T.reshape(n_components, t, c)
+        exp_var[typ_i,:] = pca.explained_variance_ratio_
 
-    return projection_typ
+    return exp_var
 
 def get_t_significance(all_ps_corr, all_types_cat, n_p=1000):
     """
@@ -1189,6 +1235,62 @@ def plot_pca(tw, pca_pc, colors, sp, multi_d=False, name="PCA_sc.svg"):
             
         plt.tight_layout()
         plt.show()
+
+def plot_pca_var(exp_var, exp_var_n, colors, sp, name):
+    types = colors.keys()
+    
+    fig, axes = plt.subplots(exp_var.shape[0], 1, figsize=(10, 8))
+    
+    for ti, typ in enumerate(types):       
+        
+        if exp_var.ndim == 2:
+            axes[ti].plot(exp_var[ti,:], color=colors[typ], marker="o")
+            axes[ti].plot(exp_var_n[ti,:], color=colors[typ], marker="x")
+            axes[ti].set_ylim([0,0.8])
+            axes[ti].set_ylabel("explained variance")
+        else:
+            dif = (exp_var[ti,:,:] - exp_var_n[ti,:,:]) #/ exp_var_n[ti,:,:]
+            axes[ti].plot(dif, color=colors[typ], marker="o")
+            axes[ti].hlines(0,0,exp_var.shape[1], color="gray", linestyle="--")
+            axes[ti].set_ylabel("normalized explained variance")
+            
+        for s in ['right', 'top']:
+            axes[ti].spines[s].set_visible(False)
+        if ti < 2:
+            axes[ti].set_xticks([])
+        else:
+            axes[ti].set_xlabel("PC")
+        
+            
+    plt.tight_layout()
+    plt.savefig(os.path.join(sp,"plots", name + "_PCA_sc_expv.svg"))
+
+    plt.show()
+
+def plot_weights(w, colors, sp, nc=3, edges=[-0.3,0.3], step=0.02):
+    types = colors.keys()
+    
+    fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
+    for c in range(nc):
+        bins = np.arange(edges[0],edges[1],step)
+        for ti, typ in enumerate(types):
+            axes[c].hist(w[ti][c,:], bins, histtype='step', 
+                         fill=False, edgecolor=colors[typ])
+        
+        ylim = axes[c].get_ylim()[1]
+        axes[c].vlines(0,0,ylim,colors="gray",linestyles="dashed")
+        axes[c].set_ylabel("count PCA " + str(c + 1))
+        
+        for s in ['right', 'top']:
+            axes[c].spines[s].set_visible(False)
+            
+        if c < nc-1:
+            axes[c].set_xticks([])
+        else:
+            axes[c].set_xlabel("PCA weight")
+    
+    plt.savefig(os.path.join(sp,"plots", "PCAw.svg"))
+    plt.show()
 
 def plot_types(experiments, all_types, colors, sp = "none"):
     
