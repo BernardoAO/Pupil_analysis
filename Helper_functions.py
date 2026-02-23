@@ -8,6 +8,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
 import os
+import ast
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -277,14 +278,18 @@ def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1,
                     
     return np.array(event_indx), np.array(event_types)
     
-def import_spike_data(exp, path_2_spike_bundle, 
+def import_spike_data(exp, spike_bundle_path, 
                       fs = 30000):
     """
-    Imports spike bundle data from the _Complete_spiketime_Header_TTLs_withdrops_withGUIclassif.npy files,
-    and supposedly inhibitory neuron data from the '_local_storage_SIN.npy' files
+    Imports spike bundle data from:
+    _Complete_spiketime_Header_TTLs_withdrops_withGUIclassif.npy
+    and supposedly inhibitory neuron data from:
+    '_local_storage_SIN.npy'
+    and connections data from:
+    cluster_pair_info_with_connectivity_info_all_exp.csv
     """
     # load spike data for each unit
-    Spke_Bundle_name = os.path.join(path_2_spike_bundle, exp,
+    Spke_Bundle_name = os.path.join(spike_bundle_path, exp,
                                     exp + '_Complete_spiketime_Header_TTLs_withdrops_withGUIclassif.npy')
     Spke_Bundle = \
         np.load(Spke_Bundle_name, allow_pickle=True,encoding='latin1').item()
@@ -293,12 +298,20 @@ def import_spike_data(exp, path_2_spike_bundle,
     
     # load Supposedly inhibitory neurons file
     path_SIN_data =  \
-        os.path.join(path_2_spike_bundle, exp, 
+        os.path.join(spike_bundle_path, exp, 
                         exp + '_local_storage_SIN.npy')
     SIN_data =  \
         np.load(path_SIN_data,allow_pickle=True,encoding='latin1').item()
+    
+    connectivity = \
+        pd.read_csv(os.path.join(spike_bundle_path,
+                                 'cluster_pair_info_with_connectivity_info_all_exp.csv'))
+    connected_pairs_l = connectivity.loc[(connectivity['exp_name'] == exp) & 
+                                       connectivity['connection'],
+                                       'spike_bundle_indx_pair'].tolist()
+    connected_pairs = np.array([ast.literal_eval(p) for p in connected_pairs_l])
 
-    return Spke_Bundle, spiketimes, SIN_data
+    return Spke_Bundle, spiketimes, SIN_data, connected_pairs
 
 def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
     """
@@ -347,13 +360,14 @@ def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
 
     return sync_cam[mask], pupil_size[mask], pupil_center[:,mask], saccades
 
-def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors,
-                      units_for_plot=[]):
+def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, connected_pairs_all,
+                      colors, units_for_plot=[]):
     """
     Gets valid units: (TCA, NW, BW).
     Parameters:
     - Spke_Bundle: Spike bundle dictionary
     - SIN_data: Supposedly inhibitory neuron dictionary
+    - connected_pairs_all: np.ndarray, shape (n)
     - spiketimes: list, length N
     - colors: dict
 
@@ -381,6 +395,11 @@ def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors,
             valid_cluster_indx.append(neu_indx)
     
     valid_spiketimes = [spiketimes[i] for i in valid_cluster_indx]
+
+    # connection indx matching    
+    old_to_new = -np.ones(max(valid_cluster_indx) + 1, dtype=int)
+    old_to_new[valid_cluster_indx] = np.arange(len(valid_cluster_indx))
+    connected_pairs = old_to_new[connected_pairs_all]
     
     if units_for_plot:
         valid_spiketimes = [valid_spiketimes[u] for u in units_for_plot]
@@ -388,9 +407,9 @@ def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors,
         
     c_types = np.array([colors[n] for n in cluster_type])
     
-    return valid_spiketimes, cluster_type, c_types
+    return valid_spiketimes, cluster_type, c_types, connected_pairs
 
-def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
+def get_firing_rate(spike_times, bt, win=[-0.05, 0.05], n_jobs=-1):
     """
     Calculates a matrix of firing rates and z scored fr (n_units x time) using 
     the 2 indices method, considering a centered window around each camara frame. 
@@ -398,22 +417,21 @@ def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
     Parameters:
     - spike_times: list of length n_units with np.ndarrays, shape (n_spikes)
     - bt: np.ndarray, shape (T)
-    - win: float, time window size in seconds
+    - win: list, [start,end]
     - n_jobs: int, number of parallel jobs (default -1 = use all cores)
 
     Returns:
     - firing_rate: ndarray of shape (n_units, len(bt))
     - z_fr: ndarray of shape (n_units, len(bt))
     """
-    half_win = win / 2
 
     def compute_unit_rate(st):
         firing_rate = np.zeros(len(bt))
         start_idx, end_idx = 0, 0
 
         for ti, t in enumerate(bt):
-            start_time = t - half_win
-            end_time = t + half_win
+            start_time = t + win[0]
+            end_time = t + win[1]
 
             while start_idx < len(st) and st[start_idx] < start_time:
                 start_idx += 1
@@ -430,7 +448,7 @@ def get_firing_rate(spike_times, bt, win=0.1, n_jobs=-1):
         delayed(compute_unit_rate)(st) for st in spike_times
     )
 
-    firing_rate = np.array(firing_rate) / win
+    firing_rate = np.array(firing_rate) / (win[1] - win[0])
     
     m_fr = np.expand_dims(np.mean(firing_rate, axis=1), axis=1)
     std_fr = np.expand_dims(np.std(firing_rate, axis=1), axis=1)    
@@ -573,17 +591,18 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
 
     return trial_fr, mean_fr, tw
 
-def get_response_times(fr, align_indx, win=[-1,-0.2, 1], thres=0.1, n_tw = 5,
-                       camara_fs = 200):
+def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05, 
+                       n_p = 1000, n_tw = 5, camara_fs = 200):
     """
-    Obtains the reaction times for each neuron, i.e. when AUROC with a basal 
-    distribution goes over a threshold for n_tw consecutive windows.
+    Obtains the reaction times for each neuron, with permutation AUC 
+    significance.
     
     Parameters:    
     fr : np.ndarray, shape (n_neu, T)
     align_indx: np.ndarray, shape (n_events)
-    thres: float, threshold for the difference of auroc to 0.5
-    n_tw: int, number of consecutive windows above the thres
+    p: float, p value
+    n_p: int, number of permutations
+    n_tw: int, number of consecutive windows with significant p
     win: [basal_start, basal_end, post_end]  
 
     Returns:
@@ -596,34 +615,40 @@ def get_response_times(fr, align_indx, win=[-1,-0.2, 1], thres=0.1, n_tw = 5,
     tiw_post = np.arange(win[1]*camara_fs, win[2]*camara_fs, dtype=int)    
          
     rts = np.full(n_unit, np.nan)
+    
+    def auc_stat(A, B):
+        y_true = np.concatenate([np.zeros_like(A), 
+                                np.ones_like(B)])
+        scores = np.concatenate([A, B])
+        return roc_auc_score(y_true, scores)
+    
     for n in range(n_unit):
         
-        idx = align_indx[:, None] + tiw_basal[None, :]
-        basal_fr = fr[n, idx].flatten() # shape (n_trials, tw)
-        
+        idx = align_indx[:, None] + tiw_basal[None, :] # shape (n_trials, tw_b)
+        basal_fr = fr[n, idx] # shape (n_trials, tw_b)
+        basal_fr_f = basal_fr.flatten()
+
         idx = align_indx[:, None] + tiw_post[None, :]
-        post_fr = fr[n, idx]
-
-        i = 0
+        post_fr = fr[n, idx]     
+        
+        ti = 0
         sig_tw = 0
-        while i < len(tiw_post) and np.isnan(rts[n]):
-            post_fr_t = post_fr[:,i]
-            
-            y_true = np.concatenate([np.zeros_like(basal_fr), 
-                                     np.ones_like(post_fr_t)])
-            scores = np.concatenate([basal_fr, post_fr_t])
+        while ti < len(tiw_post) and np.isnan(rts[n]):
+            post_fr_t = post_fr[:,ti]
 
-            auc = roc_auc_score(y_true, scores)
-
-            if np.abs(auc - 0.5) > thres:
+            stat_t = \
+                stats.permutation_test((basal_fr_f, post_fr_t), batch=n_p,
+                                       statistic=auc_stat, n_resamples=n_p, 
+                                       random_state=0, alternative='two-sided')
+            if stat_t.pvalue < p:
                 sig_tw += 1
                 if sig_tw == n_tw:
-                    rts[n] = (tiw_post[i] - n_tw) / camara_fs
+                    rts[n] = (tiw_post[ti] - n_tw) / camara_fs
             else:
                 sig_tw = 0
             
-            i += 1
-
+            ti += 1
+            
     return rts
 
 def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
@@ -1096,9 +1121,10 @@ def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp,
     plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
     plt.show()
 
-def plot_raster(st, sync_cam, align_indx, colors, 
-                tw, mean_fr, c_types, sp="none", name="fr_aligned.png"):
-    
+def plot_raster(st, sync_cam, align_indx, spk_colors, 
+                tw, mean_fr, c_types, cluster_type, 
+                sp="none", name="fr_aligned.png"):
+    unique_colors = np.unique(np.array(spk_colors))
     for n, spikes in enumerate(st):
 
         aligned_spikes = []
@@ -1109,8 +1135,8 @@ def plot_raster(st, sync_cam, align_indx, colors,
         
         fig, axes = plt.subplots(2,1, figsize=(10, 8))
         
-        if colors:
-            axes[0].eventplot(aligned_spikes, colors=colors)  
+        if spk_colors:
+            axes[0].eventplot(aligned_spikes, colors=spk_colors)  
         else:
             axes[0].eventplot(aligned_spikes)
             
@@ -1118,9 +1144,15 @@ def plot_raster(st, sync_cam, align_indx, colors,
         axes[0].axis('off')
         
         if mean_fr.ndim == 3:
-            axes[1].plot(tw, mean_fr[n,:,0], color=c_types[n])
-            axes[1].plot(tw, mean_fr[n,:,1], color=c_types[n], 
-                         linestyle="dashed")
+            axes[1].plot(tw, mean_fr[n,:,0], color=unique_colors[0])
+            axes[1].plot(tw, mean_fr[n,:,1], color=unique_colors[1])
+            
+            axes[1].spines['bottom'].set_color(c_types[n])
+            axes[1].spines['left'].set_color(c_types[n])
+            axes[1].tick_params(axis='both', colors=c_types[n])
+            axes[1].xaxis.label.set_color(c_types[n])
+            axes[1].yaxis.label.set_color(c_types[n])
+            
         else:
             axes[1].plot(tw, mean_fr[n,:], color=c_types[n])
             
@@ -1128,13 +1160,14 @@ def plot_raster(st, sync_cam, align_indx, colors,
         axes[1].set_xlabel("time [s]")
         axes[1].set_ylabel("firing rate")
         plt.tight_layout()
+        
         for s in ['right', 'top']:
             axes[1].spines[s].set_visible(False)
-            
         if sp == "none":
             plt.show()
         else:
-            plt.savefig(os.path.join(sp,"plots", "Neurons", str(n) + name))
+            plt.savefig(os.path.join(sp,"plots", "Neurons",
+                                     str(n) + cluster_type[n] + name))
             plt.close(fig)
         
 def plot_umap(embedding, c_types, sp, emb_p = [], mean_emb_c = []):
@@ -1318,3 +1351,21 @@ def plot_types(experiments, all_types, colors, sp = "none"):
         plt.savefig(os.path.join(sp,"plots", "n neurons.svg"))
     plt.show()
     
+def plot_conn(connected_pairs, cluster_type, colors, sp, name):
+    types, type_ind, type_counts = np.unique(cluster_type, return_inverse=True,
+                                   return_counts=True)
+    
+    con_mat = np.zeros((len(types), len(types)))
+    for pair in connected_pairs:
+        con_mat[type_ind[pair[0]], type_ind[pair[1]]] += 1
+        
+    plt.imshow(con_mat.T, cmap="Greens")
+    
+    plt.xticks(np.arange(len(types)), labels = types)
+    plt.yticks(np.arange(len(types)), labels = types)
+    plt.xlabel("presynaptic")
+    plt.ylabel("postsynaptic")
+    plt.colorbar(label="count")
+    
+    plt.savefig(os.path.join(sp,"plots", name + "_conn_matrix.svg"))
+    plt.show()

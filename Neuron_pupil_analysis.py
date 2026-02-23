@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tqdm import tqdm
 import Helper_functions as hf
-assert False
+#assert False
 
 # TODO saccades per stimuli
 
@@ -64,7 +64,7 @@ def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name,
 
 def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes, 
                      sync_cam, c_types, save_path, cluster_type, colors,
-                     win = [-0.25,1], nc=10, an_type="PCA",plot="none"):    
+                     win = [-0.25,1], nc=10, an_type="PCA", plot="none"):    
     
     saccades_all = np.concatenate((saccades["temporal"], 
                                 saccades["nasal"]), axis=0)
@@ -81,18 +81,19 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     
     if plot == "all" or plot == "pupil":
         hf.plot_event(saccades, pupil_center[0,:], "x coordinate", exp, save_path)
-    if plot == "all" or plot == "raster":
+    if plot == "all" or plot == "raster":            
         hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
-                    tw, fr_sc, c_types, save_path, name="fr_man_sac.svg")
-    
+                       tw, fr_sc, c_types, cluster_type, 
+                       save_path, name="_sac.png")
+
     if an_type == "RT":
         # Preferred direction
         max_fr = np.max(fr_sc, axis=1)
         pref_sc = np.argmax(max_fr, axis=1)
         
         # Response times
-        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], thres=0.15)
-        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], thres=0.15)
+        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"])
+        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"])
         rts_sc = [np.where(pref_sc == 0, rts_sc_t, rts_sc_n), 
                   np.where(pref_sc == 1, rts_sc_t, rts_sc_n)]
         
@@ -120,16 +121,17 @@ camara_fs = 200 # Hz
 colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"} 
 
 # Parameters
-analysis = "sac_PCA" # exp, ps_pc_corr, ps_corr, ps_ev, pc_sim, sac_RT
+analysis = "conn" # exp, ps_pc_corr, ps_corr, ps_ev, pc_sim, sac_RT, sac_PCA
 period =  "all" # "chirp"
-ps_corr_edges = np.arange(-0.3,0.32,0.010)
-units_for_plot = [] # [357(1),368,404] #ps #22 ps_exp 
-                    # [30,176,355] #pc 
+fr_win = [-0.04, 0] #[-0.05, 0.05] #
+ps_corr_edges = np.arange(-0.3, 0.32, 0.010)
+units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
+                    # [30,176,355] #sac 
 
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-#experiments = [experiments[1]]
+experiments = [experiments[0]]
 
 results = defaultdict(list)
 
@@ -141,7 +143,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     ## Import
     
     # spike data
-    Spke_Bundle, spiketimes, SIN_data = \
+    Spke_Bundle, spiketimes, SIN_data, connected_pairs_all = \
         hf.import_spike_data(exp, spike_bundle_path)
     vis_stim, stim_colors = hf.get_stims(Spke_Bundle)
 
@@ -162,15 +164,15 @@ for exp in tqdm(experiments, desc="Files processed"):
         
     else:
         # get valid clusters
-        valid_spiketimes, cluster_type, c_types = \
-            hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, colors, 
-                                 units_for_plot)            
+        valid_spiketimes, cluster_type, c_types, connected_pairs = \
+            hf.get_valid_cluster(Spke_Bundle, SIN_data, spiketimes,
+                                 connected_pairs_all, colors, units_for_plot)            
         results["types"].append(cluster_type)
-        
+
         ## Firing rate
         
         tqdm.write("Firing rate...")
-        firing_rate, z_fr = hf.get_firing_rate(valid_spiketimes, sync_cam)
+        firing_rate, z_fr = hf.get_firing_rate(valid_spiketimes, sync_cam, fr_win)
         tqdm.write(analysis + " analysis...")
          
         ## Pupil size
@@ -209,6 +211,10 @@ for exp in tqdm(experiments, desc="Files processed"):
             results["fr_sc"].append(fr_sc)
             results["rts_sc"].append(rts_sc)
             
+
+
+
+plot_conn(connected_pairs, cluster_type, colors, save_path, exp)
 
 ## All plots
 
@@ -261,14 +267,11 @@ else:
 
     elif analysis == "sac_RT":
         edges = np.arange(-0.2, 1, 0.01)
+        rt_title = ["pref", "nonpref"]
         for i in range(2):
             all_rts_sc_i = np.concatenate([rt[i] for rt in results["rts_sc"]])
             hf.plot_metric_typ_cum(all_rts_sc_i, all_types_cat, colors, edges, 
-                                   "rts_"+ str(i), save_path)
+                                   "rts "+ rt_title[i], save_path)
 
 #if __name__ == "__main__":
 #    main()
-
-
-
-
