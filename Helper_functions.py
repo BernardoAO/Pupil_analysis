@@ -9,6 +9,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
 import os
 import ast
+from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -594,7 +595,7 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
 def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05, 
                        n_p = 1000, n_tw = 5, camara_fs = 200):
     """
-    Obtains the reaction times for each neuron, with permutation AUC 
+    Obtains the reaction times for each neuron, with Mann-Whitney U 
     significance.
     
     Parameters:    
@@ -608,6 +609,20 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
     Returns:
     rts : np.ndarray, shape (n_neu)
     """
+    # def auc_stat(A, B):
+    #     y_true = np.concatenate([np.zeros_like(A), 
+    #                             np.ones_like(B)])
+    #     scores = np.concatenate([A, B])
+    #     return roc_auc_score(y_true, scores)
+    class mannwhitneyu_p():
+        def __init__(self,n1,n2):
+            self.mu = n1 * n2 / 2
+            self.sigma = np.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
+        def run_test(self,x,y):
+            U, _ = stats.mannwhitneyu(x, y, alternative='two-sided')
+            z = (U - self.mu) / self.sigma
+            p = 2 * (1 - stats.norm.cdf(abs(z)))        
+            return p
     
     n_unit = fr.shape[0]
     
@@ -616,13 +631,10 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
          
     rts = np.full(n_unit, np.nan)
     
-    def auc_stat(A, B):
-        y_true = np.concatenate([np.zeros_like(A), 
-                                np.ones_like(B)])
-        scores = np.concatenate([A, B])
-        return roc_auc_score(y_true, scores)
     
-    for n in range(n_unit):
+    MW = mannwhitneyu_p(len(align_indx)*len(tiw_basal),len(align_indx))
+
+    for n in tqdm(range(n_unit)):
         
         idx = align_indx[:, None] + tiw_basal[None, :] # shape (n_trials, tw_b)
         basal_fr = fr[n, idx] # shape (n_trials, tw_b)
@@ -635,12 +647,13 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
         sig_tw = 0
         while ti < len(tiw_post) and np.isnan(rts[n]):
             post_fr_t = post_fr[:,ti]
-
-            stat_t = \
-                stats.permutation_test((basal_fr_f, post_fr_t), batch=n_p,
-                                       statistic=auc_stat, n_resamples=n_p, 
-                                       random_state=0, alternative='two-sided')
-            if stat_t.pvalue < p:
+            
+            p_t = MW.run_test(basal_fr_f, post_fr_t)
+            # stat_t = \
+            #     stats.permutation_test((basal_fr_f, post_fr_t), batch=n_p,
+            #                            statistic=auc_stat, n_resamples=n_p, 
+            #                            random_state=0, alternative='two-sided')
+            if p_t < p:
                 sig_tw += 1
                 if sig_tw == n_tw:
                     rts[n] = (tiw_post[ti] - n_tw) / camara_fs
@@ -696,31 +709,35 @@ def neuron_PCA(fr, types, n_components = 10):
     n_components: int
     
     Returns:
-    projection_typ: ndarray, shape (n_typ, n_components, t, c)
-    exp_var: ndarray, shape (n_typ, n_components)
-    w: list of n_typ ndarrays shape (n_components, n_t)
+    pca_results: dict with the name of the type of dictionaries containing:
+        projection: ndarray, shape (n_components, t, c)
+        exp_var: ndarray, shape (n_components)
+        w: ndarrays shape (n_components, n_t)
     """
     types = np.asarray(types)
     n, t, c = fr.shape
-    n_typ = len(np.unique(types))
-    projection_typ = np.empty((n_typ, n_components, t, c))
-    exp_var = np.empty((n_typ, n_components))
-    w = []
+    result_names = ["projection", "exp_var", "w"]
     
-    for typ_i, ty in enumerate(np.unique(types)):
+    uniq_typ, n_typ = np.unique(types, return_counts=True)
+    pca_results = dict.fromkeys(uniq_typ)
 
-        fr_ty = fr[ty == types, :, :]
-        n_t = fr_ty.shape[0]
-        X = fr_ty.reshape(n_t, t * c).T
+    for typ_i, typ in enumerate(uniq_typ):
+        
+        pca_results[typ] = dict.fromkeys(result_names)
+        
+        fr_typ = fr[typ == types, :, :]
+        n_t = fr_typ.shape[0]
+        X = fr_typ.reshape(n_t, t * c).T
 
         pca = PCA(n_components=n_components)
-        projection = pca.fit_transform(X)
+        projection_full = pca.fit_transform(X)
         
-        exp_var[typ_i,:] = pca.explained_variance_ratio_
-        w.append(pca.components_)
-        projection_typ[typ_i,:,:,:] = projection.T.reshape(n_components, t, c)
+        pca_results[typ]["exp_var"] = pca.explained_variance_ratio_
+        pca_results[typ]["w"] = pca.components_
+        pca_results[typ]["projection"] = \
+            projection_full.T.reshape(n_components, t, c)
 
-    return projection_typ, exp_var, w
+    return pca_results
 
 def noise_PCA(fr, trial_fr, types, n_components = 10):
     """
@@ -733,26 +750,27 @@ def noise_PCA(fr, trial_fr, types, n_components = 10):
     n_components: int
     
     Returns:
-    exp_var: ndarray, shape (n_typ, n_components)
+    exp_var: dictionary for each type with:
+        ndarray, shape (n_components)
     """
     types = np.asarray(types)
-    n_typ = len(np.unique(types))
-    exp_var = np.empty((n_typ, n_components))
+    uniq_typ, n_typ = np.unique(types, return_counts=True)
+    exp_var = dict.fromkeys(uniq_typ)
     
     fr_noise_t = trial_fr[0] - np.expand_dims(fr[:,:, 0], axis=2)
     fr_noise_n = trial_fr[1] - np.expand_dims(fr[:,:, 1], axis=2)
     fr_noise = np.concatenate((fr_noise_t, fr_noise_n), axis=2)
     n, t, tr = fr_noise.shape
     
-    for typ_i, ty in enumerate(np.unique(types)):
-        fr_ty = fr_noise[ty == types, :, :]
+    for typ_i, typ in enumerate(uniq_typ):
+        fr_ty = fr_noise[typ == types, :, :]
         n = fr_ty.shape[0]
         
         X = fr_ty.reshape(n, t * tr).T
 
         pca = PCA(n_components=n_components)
-        projection = pca.fit_transform(X)  
-        exp_var[typ_i,:] = pca.explained_variance_ratio_
+        _ = pca.fit_transform(X)  
+        exp_var[typ] = pca.explained_variance_ratio_
 
     return exp_var
 
@@ -1122,9 +1140,9 @@ def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp,
     plt.show()
 
 def plot_raster(st, sync_cam, align_indx, spk_colors, 
-                tw, mean_fr, c_types, cluster_type, 
+                tw, mean_fr, c_types, cluster_type, rts=[],
                 sp="none", name="fr_aligned.png"):
-    unique_colors = np.unique(np.array(spk_colors))
+    unique_colors = np.unique(np.array(spk_colors)) #temp, nasal
     for n, spikes in enumerate(st):
 
         aligned_spikes = []
@@ -1143,9 +1161,14 @@ def plot_raster(st, sync_cam, align_indx, spk_colors,
         axes[0].set_xlim([tw[0],tw[-1]])
         axes[0].axis('off')
         
-        if mean_fr.ndim == 3:
+        if mean_fr.ndim == 3: # saccades
             axes[1].plot(tw, mean_fr[n,:,0], color=unique_colors[0])
             axes[1].plot(tw, mean_fr[n,:,1], color=unique_colors[1])
+            
+            if rts:
+                ylim = axes[1].get_ylim()
+                axes[1].vlines([rt[n] for rt in rts], ylim[0], ylim[1],
+                               colors = unique_colors, linestyle="--")
             
             axes[1].spines['bottom'].set_color(c_types[n])
             axes[1].spines['left'].set_color(c_types[n])
@@ -1167,7 +1190,8 @@ def plot_raster(st, sync_cam, align_indx, spk_colors,
             plt.show()
         else:
             plt.savefig(os.path.join(sp,"plots", "Neurons",
-                                     str(n) + cluster_type[n] + name))
+                                     str(n) + "_" + cluster_type[n] + 
+                                     "_" + name))
             plt.close(fig)
         
 def plot_umap(embedding, c_types, sp, emb_p = [], mean_emb_c = []):
@@ -1217,16 +1241,18 @@ def plot_event(events, b, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
     plt.savefig(os.path.join(sp,"plots", exp + name + ".svg"))
     plt.show()
     
-def plot_pca(tw, pca_pc, colors, sp, multi_d=False, name="PCA_sc.svg"):
+def plot_pca(tw, pca_results, colors, sp, multi_d=False, name="PCA_sc.svg", 
+             nc=3):
     types = colors.keys()
     if not multi_d:
         for ti, typ in enumerate(types):       
             
-            fig, axes = plt.subplots(pca_pc.shape[1], 1, figsize=(10, 8))
-            for c in range(pca_pc.shape[1]): 
+            fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
+            for c in range(nc): 
+                proj = pca_results[typ]["projection"]
                 
-                axes[c].plot(tw, pca_pc[ti,c,:,0], color="navy")
-                axes[c].plot(tw, pca_pc[ti,c,:,1], color="violet")
+                axes[c].plot(tw, proj[c,:,0], color="navy")
+                axes[c].plot(tw, proj[c,:,1], color="violet")
                 
                 ylim = axes[c].get_ylim()
                 axes[c].vlines(0, ylim[0], ylim[1], 
@@ -1234,7 +1260,7 @@ def plot_pca(tw, pca_pc, colors, sp, multi_d=False, name="PCA_sc.svg"):
                 
                 axes[c].tick_params(axis='y', labelcolor=colors[typ])
                 axes[c].set_ylabel("PC" + str(c+1))
-                if c < pca_pc.shape[1] - 1:
+                if c < nc - 1:
                     axes[c].set_xticks([])
                 else:
                     axes[c].set_xlabel("time [s]")
@@ -1269,23 +1295,28 @@ def plot_pca(tw, pca_pc, colors, sp, multi_d=False, name="PCA_sc.svg"):
         plt.tight_layout()
         plt.show()
 
-def plot_pca_var(exp_var, exp_var_n, colors, sp, name):
+def plot_pca_var(pca_results, exp_var_n, colors, sp, name):
     types = colors.keys()
     
-    fig, axes = plt.subplots(exp_var.shape[0], 1, figsize=(10, 8))
+    fig, axes = plt.subplots(len(types), 1, figsize=(10, 8))
     
     for ti, typ in enumerate(types):       
         
-        if exp_var.ndim == 2:
-            axes[ti].plot(exp_var[ti,:], color=colors[typ], marker="o")
-            axes[ti].plot(exp_var_n[ti,:], color=colors[typ], marker="x")
+        if type(pca_results) == list: # for many exp
+            exp_var_all = np.array([pr[typ]["exp_var"] for pr in pca_results]) 
+            exp_var_n_all = np.array([evn[typ] for evn in exp_var_n]) # (n_m, nc)
+            dif = (exp_var_all - exp_var_n_all).T #/ exp_var_n[ti,:,:]
+            axes[ti].plot(dif, color=colors[typ], marker="o")
+            axes[ti].hlines(0,0,exp_var_all.shape[1], color="gray", linestyle="--")
+            axes[ti].set_ylabel("normalized explained variance")
+            
+        else:
+            axes[ti].plot(pca_results[typ]["exp_var"], 
+                          color=colors[typ], marker="o")
+            axes[ti].plot(exp_var_n[typ], 
+                          color=colors[typ], marker="x")
             axes[ti].set_ylim([0,0.8])
             axes[ti].set_ylabel("explained variance")
-        else:
-            dif = (exp_var[ti,:,:] - exp_var_n[ti,:,:]) #/ exp_var_n[ti,:,:]
-            axes[ti].plot(dif, color=colors[typ], marker="o")
-            axes[ti].hlines(0,0,exp_var.shape[1], color="gray", linestyle="--")
-            axes[ti].set_ylabel("normalized explained variance")
             
         for s in ['right', 'top']:
             axes[ti].spines[s].set_visible(False)
@@ -1300,14 +1331,14 @@ def plot_pca_var(exp_var, exp_var_n, colors, sp, name):
 
     plt.show()
 
-def plot_weights(w, colors, sp, nc=3, edges=[-0.3,0.3], step=0.02):
+def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.02):
     types = colors.keys()
     
     fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
     for c in range(nc):
         bins = np.arange(edges[0],edges[1],step)
         for ti, typ in enumerate(types):
-            axes[c].hist(w[ti][c,:], bins, histtype='step', 
+            axes[c].hist(pca_results[typ]["w"][c,:], bins, histtype='step', 
                          fill=False, edgecolor=colors[typ])
         
         ylim = axes[c].get_ylim()[1]
@@ -1352,8 +1383,7 @@ def plot_types(experiments, all_types, colors, sp = "none"):
     plt.show()
     
 def plot_conn(connected_pairs, cluster_type, colors, sp, name):
-    types, type_ind, type_counts = np.unique(cluster_type, return_inverse=True,
-                                   return_counts=True)
+    types, type_ind = np.unique(cluster_type, return_inverse=True)
     
     con_mat = np.zeros((len(types), len(types)))
     for pair in connected_pairs:
@@ -1368,4 +1398,40 @@ def plot_conn(connected_pairs, cluster_type, colors, sp, name):
     plt.colorbar(label="count")
     
     plt.savefig(os.path.join(sp,"plots", name + "_conn_matrix.svg"))
+    plt.show()
+    
+def plot_weights_conn(connected_pairs, metric, cluster_type, sp, exp,
+                      nc=[0,0], pre_post=["TCA", "NW"]):
+    cluster_type = np.asarray(cluster_type)
+    types, type_ind = np.unique(cluster_type, return_inverse=True)
+    
+    pre_mask = cluster_type == pre_post[0]
+    post_mask = cluster_type == pre_post[1]
+    
+    pre_post_mask = (pre_mask[connected_pairs[:,0]] &
+                     post_mask[connected_pairs[:,1]])
+    pre_post_pair = connected_pairs[pre_post_mask,:]
+
+    # Get local indices mapping for TCA and NW
+    pre_idx_map = {global_idx: local_idx for local_idx, global_idx 
+                   in enumerate(np.where(pre_mask)[0])}
+    post_idx_map = {global_idx: local_idx for local_idx, global_idx 
+                  in enumerate(np.where(post_mask)[0])}
+    
+    metric_pair = np.zeros((len(pre_post_pair), 2))
+    for p, pair in enumerate(pre_post_pair):
+        indx_pre = pre_idx_map[pair[0]]
+        indx_post  = post_idx_map[pair[1]]
+        
+        metric_pair[p,0] = pca_results[pre_post[0]]["w"][nc[0], indx_pre]  
+        metric_pair[p,1] = pca_results[pre_post[1]]["w"][nc[1], indx_post]   
+    
+    r_coef = np.corrcoef(metric_pair.T)[0,1]
+
+    plt.scatter(metric_pair[:,0], metric_pair[:,1], c="forestgreen", alpha=0.8)
+    plt.xlabel("presyn. " + pre_post[0] + " w" + str(nc[0] + 1))
+    plt.ylabel("postsyn. " + pre_post[1] + " w" + str(nc[1] + 1))
+    plt.text(0.2, 0.2, "r_coef = " + str(np.round(r_coef,2)))
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
     plt.show()

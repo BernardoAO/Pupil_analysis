@@ -63,7 +63,7 @@ def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name,
                           center_edges, plot_name, save_path,clim=[-1,1])
 
 def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes, 
-                     sync_cam, c_types, save_path, cluster_type, colors,
+                     sync_cam, c_types, save_path, cluster_type, colors, exp,
                      win = [-0.25,1], nc=10, an_type="PCA", plot="none"):    
     
     saccades_all = np.concatenate((saccades["temporal"], 
@@ -92,21 +92,24 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
         pref_sc = np.argmax(max_fr, axis=1)
         
         # Response times
-        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"])
-        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"])
-        rts_sc = [np.where(pref_sc == 0, rts_sc_t, rts_sc_n), 
-                  np.where(pref_sc == 1, rts_sc_t, rts_sc_n)]
-        
-        return tw, fr_sc, rts_sc
+        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], p=0.01)
+        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], p=0.01)
+        rts_sc = np.array([np.where(pref_sc == 0, rts_sc_t, rts_sc_n), 
+                           np.where(pref_sc == 1, rts_sc_t, rts_sc_n)])
+        if plot == "raster_RT":
+            hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
+                           tw, fr_sc, c_types, cluster_type, rts=[rts_sc_t, rts_sc_n],
+                           sp = save_path, name= exp + "_sac.png")
+        return tw, fr_sc, rts_sc, pref_sc
         
     elif an_type == "PCA":
-        pca_pc, exp_var, _ = hf.neuron_PCA(fr_sc, cluster_type, n_components=nc)
+        pca_results = hf.neuron_PCA(fr_sc, cluster_type, n_components=nc)
         exp_var_n = hf.noise_PCA(fr_sc, trial_fr, cluster_type, n_components=nc)
         if plot == "all" or plot == "pca":
-            hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, save_path)
-            hf.plot_pca_var(exp_var, exp_var_n, colors, save_path, exp)
+            hf.plot_pca(tw, pca_results, colors, save_path)
+            hf.plot_pca_var(pca_results, exp_var_n, colors, save_path, exp)
         
-        return tw, fr_sc, [exp_var, exp_var_n]
+        return tw, fr_sc, pca_results, exp_var_n
 
 #def main():
     
@@ -121,7 +124,7 @@ camara_fs = 200 # Hz
 colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"} 
 
 # Parameters
-analysis = "conn" # exp, ps_pc_corr, ps_corr, ps_ev, pc_sim, sac_RT, sac_PCA
+analysis = "sac_RT" # exp, ps_pc_corr, ps_corr, ps_ev, pc_sim, sac_RT, sac_PCA
 period =  "all" # "chirp"
 fr_win = [-0.04, 0] #[-0.05, 0.05] #
 ps_corr_edges = np.arange(-0.3, 0.32, 0.010)
@@ -131,7 +134,7 @@ units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = [experiments[0]]
+#experiments = [experiments[0]]
 
 results = defaultdict(list)
 
@@ -194,27 +197,29 @@ for exp in tqdm(experiments, desc="Files processed"):
                         save_path)
         
         elif analysis == "sac_PCA": # saccades                
-            tw, fr_sc, PCA_var = \
+            tw, fr_sc, pca_results, exp_var_n = \
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
-                                 save_path, cluster_type, colors)
+                                 save_path, cluster_type, colors, exp)
                 
             results["fr_sc"].append(fr_sc)
-            results["PCA_var"].append(PCA_var)
+            results["PCA_var"].append([pca_results, exp_var_n])
         
         elif analysis == "sac_RT": # saccades                
-            tw, fr_sc, rts_sc = \
+            tw, fr_sc, rts_sc, pref_sc = \
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
-                                 save_path, cluster_type, colors, an_type="RT")
+                                 save_path, cluster_type, colors, exp,
+                                 an_type="RT", plot="raster_RT")
                 
             results["fr_sc"].append(fr_sc)
-            results["rts_sc"].append(rts_sc)
-            
+            results["rts_sc"].append(rts_sc) 
+            results["pref_sc"].append(pref_sc) 
+        
+        elif analysis == "conn":
+            hf.plot_conn(connected_pairs, cluster_type, colors, save_path, exp)
 
 
-
-plot_conn(connected_pairs, cluster_type, colors, save_path, exp)
 
 ## All plots
 
@@ -251,19 +256,24 @@ else:
         #                                            emb_p, c_types)
         #hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c)
         
-    elif analysis == "sac_PCA":
+    elif analysis == "sac_PCA" or analysis == "conn":
         # projection
         all_fr_sc_cat = np.concatenate(results["fr_sc"], axis = 0)
-        pca_pc, _, w = hf.neuron_PCA(all_fr_sc_cat, c_types_all, n_components=10)
-        hf.plot_pca(tw, pca_pc[:,:3,:,:], colors, save_path)
+        pca_results = hf.neuron_PCA(all_fr_sc_cat, all_types_cat)
+        hf.plot_pca(tw, pca_results, colors, save_path)
+        
+        if analysis == "conn":
+            hf.plot_weights_conn(connected_pairs, pca_results, cluster_type,
+                                 save_path, exp, nc=[1,1], pre_post=["TCA","NW"])
         
         # variance
-        exp_var = np.stack([var[0] for var in results["PCA_var"]], axis=2)
-        exp_var_n = np.stack([var[1] for var in results["PCA_var"]], axis=2)
-        hf.plot_pca_var(exp_var, exp_var_n, colors, save_path, "all")
+        pca_results_list = [var[0] for var in results["PCA_var"]]
+        exp_var_n_list = [var[1] for var in results["PCA_var"]]
+        hf.plot_pca_var(pca_results_list, exp_var_n_list, 
+                        colors, save_path, "all")
         
         # weights
-        hf.plot_weights(w, colors, save_path)    
+        hf.plot_weights(pca_results, colors, save_path)    
 
     elif analysis == "sac_RT":
         edges = np.arange(-0.2, 1, 0.01)
@@ -272,6 +282,44 @@ else:
             all_rts_sc_i = np.concatenate([rt[i] for rt in results["rts_sc"]])
             hf.plot_metric_typ_cum(all_rts_sc_i, all_types_cat, colors, edges, 
                                    "rts "+ rt_title[i], save_path)
+    
+
+"""
+def plot_pref_sc_conn(connected_pairs, pref_sc, rts_sc, cluster_type,
+                      save_path, exp, nc=[1,1], pre_post=["TCA","NW"]):
+    cluster_type = np.asarray(cluster_type)
+    
+    responsive_mask = (~np.isnan(rts_sc[0,:])) | (~np.isnan(rts_sc[0,:]))
+    pre_mask = (cluster_type == pre_post[0]) & responsive_mask 
+    post_mask = (cluster_type == pre_post[1]) & responsive_mask
+    
+    pre_post_mask = (pre_mask[connected_pairs[:,0]] &
+                     post_mask[connected_pairs[:,1]])
+    pre_post_pair = connected_pairs[pre_post_mask,:]
+    
+    x = pref_sc[pre_post_pair[:,0]]
+    y =pref_sc[pre_post_pair[:,1]]
+    r = np.corrcoef(x, y)[0,1]
+    
+    plt.hist2d(x, y,bins=2, range=[[0, 1], [0, 1]], cmap='Blues')
+    plt.text(0.6,0.1, "r_coef = " + str(np.round(r,2)))
+    plt.colorbar(label='Count')
+    plt.xticks([0, 1], labels=["temp","nasal"])
+    plt.yticks([0, 1], labels=["temp","nasal"])
+    plt.xlabel("presyn. " + pre_post[0])
+    plt.ylabel("postsyn. " + pre_post[1])
+
+    plt.show()
+    
+all_pref_sc = np.concatenate(results["pref_sc"], axis = 0)
+all_rts_sc = np.concatenate(results["rts_sc"], axis = 0)
+plot_pref_sc_conn(connected_pairs, all_pref_sc, all_rts_sc, cluster_type,
+                  save_path, exp, pre_post=["TCA","NW"])
+"""
+
+
+
+
 
 #if __name__ == "__main__":
 #    main()
