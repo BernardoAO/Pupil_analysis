@@ -595,8 +595,8 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
 def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05, 
                        n_p = 1000, n_tw = 5, camara_fs = 200):
     """
-    Obtains the reaction times for each neuron, with Mann-Whitney U 
-    significance.
+    Obtains the reaction times for each neuron, with Mann-Whitney U and AUC
+    with permutation significance.
     
     Parameters:    
     fr : np.ndarray, shape (n_neu, T)
@@ -609,20 +609,11 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
     Returns:
     rts : np.ndarray, shape (n_neu)
     """
-    # def auc_stat(A, B):
-    #     y_true = np.concatenate([np.zeros_like(A), 
-    #                             np.ones_like(B)])
-    #     scores = np.concatenate([A, B])
-    #     return roc_auc_score(y_true, scores)
-    class mannwhitneyu_p():
-        def __init__(self,n1,n2):
-            self.mu = n1 * n2 / 2
-            self.sigma = np.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
-        def run_test(self,x,y):
-            U, _ = stats.mannwhitneyu(x, y, alternative='two-sided')
-            z = (U - self.mu) / self.sigma
-            p = 2 * (1 - stats.norm.cdf(abs(z)))        
-            return p
+    def auc_stat(A, B):
+        y_true = np.concatenate([np.zeros_like(A), 
+                                np.ones_like(B)])
+        scores = np.concatenate([A, B])
+        return roc_auc_score(y_true, scores)
     
     n_unit = fr.shape[0]
     
@@ -631,9 +622,6 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
          
     rts = np.full(n_unit, np.nan)
     
-    
-    MW = mannwhitneyu_p(len(align_indx)*len(tiw_basal),len(align_indx))
-
     for n in tqdm(range(n_unit)):
         
         idx = align_indx[:, None] + tiw_basal[None, :] # shape (n_trials, tw_b)
@@ -648,13 +636,20 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
         while ti < len(tiw_post) and np.isnan(rts[n]):
             post_fr_t = post_fr[:,ti]
             
-            p_t = MW.run_test(basal_fr_f, post_fr_t)
-            # stat_t = \
-            #     stats.permutation_test((basal_fr_f, post_fr_t), batch=n_p,
-            #                            statistic=auc_stat, n_resamples=n_p, 
-            #                            random_state=0, alternative='two-sided')
+            U, p_t = stats.mannwhitneyu(basal_fr_f, post_fr_t, 
+                                        alternative='two-sided')
+
             if p_t < p:
-                sig_tw += 1
+                
+                permutations = \
+                    stats.permutation_test((basal_fr_f, post_fr_t), batch=n_p,
+                                           statistic=auc_stat, n_resamples=n_p, 
+                                           random_state=0, alternative='two-sided')
+                if permutations.pvalue < p:
+                    sig_tw += 1
+                else:
+                    sig_tw = 0
+                    
                 if sig_tw == n_tw:
                     rts[n] = (tiw_post[ti] - n_tw) / camara_fs
             else:
@@ -663,6 +658,69 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
             ti += 1
             
     return rts
+
+def get_class_coding(fr, align_indx1, align_indx2, win=[-0.25, 1], 
+                     p = 0.05, n_p = 1000, n_tw = 5, camara_fs = 200):
+    """
+    Marks for each neuron and time window when it differentiates significantly 
+    between class 1 and 2 with a 0 or a 1, else nan. It obtains the significance
+    with Mann-Whitney U.
+    
+    Parameters:    
+    fr : np.ndarray, shape (n_neu, T)
+    align_indx1 and align_indx2: np.ndarray, shape (n_events1), (n_events2)
+    p: float, p value
+    n_p: int, number of permutations
+    n_tw: int, number of consecutive windows with significant p
+    win: [basal_start, basal_end, post_end]  
+
+    Returns:
+    class_code : np.ndarray, shape (n_neu, tw)
+    """
+    def auc_stat(A, B):
+        y_true = np.concatenate([np.zeros_like(A), 
+                                np.ones_like(B)])
+        scores = np.concatenate([A, B])
+        return roc_auc_score(y_true, scores)
+    
+    n_unit = fr.shape[0]
+    
+    tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)   
+         
+    class_code = np.full((n_unit, len(tiw)), np.nan)
+    
+    for n in tqdm(range(n_unit)):
+        
+        idx1 = align_indx1[:, None] + tiw[None, :]
+        fr_c1 = fr[n, idx1]
+        
+        idx2 = align_indx2[:, None] + tiw[None, :]
+        fr_c2 = fr[n, idx2]
+        
+        sig_tw = 0            
+        for ti in range(len(tiw)):
+            fr_c1_t = fr_c1[:,ti]
+            fr_c2_t = fr_c2[:,ti]
+            
+            U, p_t = stats.mannwhitneyu(fr_c1_t, fr_c2_t, 
+                                        alternative='two-sided')
+
+            if p_t < p:
+                sig_tw += 1
+                
+                if sig_tw == n_tw:
+                    for tii in range(n_tw):
+                        class_code[n, ti-tii] = 0 if \
+                            np.mean(fr_c1[:,ti-tii]) > \
+                            np.mean(fr_c2[:, ti-tii]) else 1
+
+                elif sig_tw > n_tw:  
+                    class_code[n, ti] = 0 if \
+                        np.mean(fr_c1_t) > np.mean(fr_c2_t) else 1
+            else:
+                sig_tw = 0
+
+    return class_code
 
 def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
     """
@@ -1140,9 +1198,11 @@ def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp,
     plt.show()
 
 def plot_raster(st, sync_cam, align_indx, spk_colors, 
-                tw, mean_fr, c_types, cluster_type, rts=[],
+                tw, mean_fr, c_types, cluster_type, rts=[], coding = np.array([]),
                 sp="none", name="fr_aligned.png"):
+    
     unique_colors = np.unique(np.array(spk_colors)) #temp, nasal
+    
     for n, spikes in enumerate(st):
 
         aligned_spikes = []
@@ -1170,6 +1230,13 @@ def plot_raster(st, sync_cam, align_indx, spk_colors,
                 axes[1].vlines([rt[n] for rt in rts], ylim[0], ylim[1],
                                colors = unique_colors, linestyle="--")
             
+            elif not coding.size == 0:
+                tw_ylim = np.ones_like(tw) * axes[1].get_ylim()[1]      
+                for c in range(2):
+                    code = coding[n,:] == c                             
+                    axes[1].scatter(tw[code], tw_ylim[code], c=unique_colors[c],
+                                    edgecolors="none")
+
             axes[1].spines['bottom'].set_color(c_types[n])
             axes[1].spines['left'].set_color(c_types[n])
             axes[1].tick_params(axis='both', colors=c_types[n])
@@ -1193,6 +1260,25 @@ def plot_raster(st, sync_cam, align_indx, spk_colors,
                                      str(n) + "_" + cluster_type[n] + 
                                      "_" + name))
             plt.close(fig)
+
+def plot_nratio_code(code, cluster_type, colors, tw, sp, name):
+    
+    cluster_type = np.array(cluster_type)
+    types = colors.keys()
+    
+    sig_cod = ~np.isnan(code)
+    for ti, typ in enumerate(types):
+        sig_cod_typ = sig_cod[cluster_type == typ, :]
+        nper_code = np.mean(sig_cod_typ, axis=0) * 100
+        plt.plot(tw, nper_code, color=colors[typ])
+    
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    plt.xlabel("time [s]")
+    plt.xlim([tw[0],tw[-1]])
+    plt.ylabel("% of neurons")
+    plt.savefig(os.path.join(sp,"plots", name + "_nratio.svg"))
+    plt.show()
         
 def plot_umap(embedding, c_types, sp, emb_p = [], mean_emb_c = []):
     plt.scatter(embedding[:,0], embedding[:,1],c=c_types,
@@ -1423,8 +1509,8 @@ def plot_weights_conn(connected_pairs, metric, cluster_type, sp, exp,
         indx_pre = pre_idx_map[pair[0]]
         indx_post  = post_idx_map[pair[1]]
         
-        metric_pair[p,0] = pca_results[pre_post[0]]["w"][nc[0], indx_pre]  
-        metric_pair[p,1] = pca_results[pre_post[1]]["w"][nc[1], indx_post]   
+        metric_pair[p,0] = metric[pre_post[0]]["w"][nc[0], indx_pre]  
+        metric_pair[p,1] = metric[pre_post[1]]["w"][nc[1], indx_post]   
     
     r_coef = np.corrcoef(metric_pair.T)[0,1]
 
@@ -1434,4 +1520,27 @@ def plot_weights_conn(connected_pairs, metric, cluster_type, sp, exp,
     plt.text(0.2, 0.2, "r_coef = " + str(np.round(r_coef,2)))
     for s in ['right', 'top']:
         plt.gca().spines[s].set_visible(False)
+    plt.show()
+
+def plot_coding(tw, coding, neurons, cluster_type, colors, code_colors):
+    
+    fig, axes = plt.subplots(len(neurons), 1, figsize=(10, 8))
+    
+    for ni, n in enumerate(neurons):
+        
+        for c in range(2):
+            code = coding[n,:] == c
+            ylim = np.zeros_like(tw)
+            axes[ni].scatter(tw[code], ylim[code], c=code_colors[c],
+                        edgecolors="none")
+        
+        for s in ['right', 'top', 'left']:
+            axes[ni].spines[s].set_visible(False)
+            axes[ni].set_yticks([])
+        axes[ni].spines['bottom'].set_color(colors[cluster_type[n]])
+        
+        if ni == len(neurons) - 1:
+            axes[ni].set_xlabel("time [s]")
+        else:
+            axes[ni].set_xticklabels([])
     plt.show()
