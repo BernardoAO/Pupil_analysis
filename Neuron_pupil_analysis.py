@@ -109,7 +109,7 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
         if plot == "raster_dir":
             hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, msc_colors,
                            tw, fr_sc, c_types, cluster_type, coding = sac_dir,
-                           sp = save_path, name = exp + "_sac.svg")
+                           sp = save_path, name = exp + "_sac.png")
         elif plot == "nratio":
             hf.plot_nratio_code(sac_dir, cluster_type, colors, tw, save_path, exp)
             
@@ -146,11 +146,11 @@ fr_win = [-0.04, 0] #[-0.05, 0.05] #
 ps_corr_edges = np.arange(-0.3, 0.32, 0.010)
 units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
                     # [30,176,355] #sac 
-
+                    # double_sac [135,146,297,407]
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-#experiments = [experiments[0]]
+experiments = [experiments[0]]
 
 results = defaultdict(list)
 
@@ -230,7 +230,7 @@ for exp in tqdm(experiments, desc="Files processed"):
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
                                  save_path, cluster_type, colors, exp,
-                                 an_type="dir")
+                                 an_type="dir", win = [-1,1], plot="raster_dir")
             results["fr_sc"].append(fr_sc)
             results["sac_dir"].append(sac_dir) 
         
@@ -246,7 +246,54 @@ for exp in tqdm(experiments, desc="Files processed"):
 
         elif analysis == "conn":
             hf.plot_conn(connected_pairs, cluster_type, colors, save_path, exp)
-            
+assert False
+
+
+def find_double_coders(tw, sac_dir, tww = [-0.4,0.4]):
+    double_n = []
+    for n in range(sac_dir.shape[0]):
+        t_mask = (tw > tww[0]) & (tw <= tww[1])
+        if (0 in sac_dir[n, t_mask]) and (1 in sac_dir[n, t_mask]):
+            double_n.append(n)
+    
+    return double_n
+
+
+def plot_sac_trayectory(saccades, pupil_center, sac_colors,
+                        end=0.05, camara_fs = 200):
+    
+    end_indx = int(end * camara_fs)
+    for ci, c in enumerate(saccades):
+        indx = np.array(saccades[c])
+        
+        ylim = np.zeros_like(indx, dtype=float)
+        plt.scatter(pupil_center[0, indx], ylim, c=sac_colors[ci],
+                    edgecolors="none")
+        
+        ylim += end
+        plt.scatter(pupil_center[0, indx + end_indx], ylim, c=sac_colors[ci],
+                    edgecolors="none")
+        
+        tw = np.arange(0, end+ 1 / camara_fs, 1 / camara_fs)
+        for i in indx:
+            plt.plot(pupil_center[0, i: i + end_indx + 1], tw, 
+                     c=sac_colors[ci], alpha=0.8)
+        
+        for s in ['right', 'top']:
+            plt.gca().spines[s].set_visible(False)
+
+        plt.ylabel("time [s]")
+        plt.xlabel("pupil postion")
+        
+    plt.show()
+
+plot_sac_trayectory(saccades, pupil_center, sac_colors)
+
+# plot coding and connectivity
+
+n = np.bincount(connected_pairs[:,1]).argmax()
+hf.plot_coding(n, tw, sac_dir, cluster_type, connected_pairs, 
+               colors, sac_colors)
 
 
 ## All plots
@@ -319,17 +366,6 @@ else:
 
 
 """
-# plot coding and connectivity
-n = 724
-cp = results["connected_pairs"][1]
-neurons = cp[cp[:,1] == n, 0]
-print(neurons)
-
-neurons = np.append(neurons, n)
-ty = np.array(results["types"][1])
-sc = results["sac_dir"][1]
-hf.plot_coding(tw, sc, neurons, ty, colors, sac_colors)
-
 #
 def plot_pref_sc_conn(connected_pairs, pref_sc, rts_sc, cluster_type,
                       save_path, exp, nc=[1,1], pre_post=["TCA","NW"]):

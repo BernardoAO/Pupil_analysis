@@ -1522,8 +1522,15 @@ def plot_weights_conn(connected_pairs, metric, cluster_type, sp, exp,
         plt.gca().spines[s].set_visible(False)
     plt.show()
 
-def plot_coding(tw, coding, neurons, cluster_type, colors, code_colors):
+def plot_coding(n_plot, tw, coding, cluster_type, connected_pairs, 
+                colors, code_colors):
+    cluster_type = np.array(cluster_type)
+
+    neurons = connected_pairs[connected_pairs[:,1] == n_plot, 0]
     
+    print("Afferent units: ", neurons)
+    
+    neurons = np.append(neurons, n_plot)
     fig, axes = plt.subplots(len(neurons), 1, figsize=(10, 8))
     
     for ni, n in enumerate(neurons):
@@ -1538,7 +1545,7 @@ def plot_coding(tw, coding, neurons, cluster_type, colors, code_colors):
             axes[ni].spines[s].set_visible(False)
             axes[ni].set_yticks([])
         axes[ni].spines['bottom'].set_color(colors[cluster_type[n]])
-        
+        axes[ni].set_xlim([tw[0],tw[-1]])
         if ni == len(neurons) - 1:
             axes[ni].set_xlabel("time [s]")
         else:
