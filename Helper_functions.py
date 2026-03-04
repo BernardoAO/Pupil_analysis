@@ -410,7 +410,8 @@ def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, connected_pairs_all,
     
     return valid_spiketimes, cluster_type, c_types, connected_pairs
 
-def get_firing_rate(spike_times, bt, win=[-0.05, 0.05], n_jobs=-1):
+def get_firing_rate(spike_times, bt, spk_count_path, win=[-0.05, 0.05], 
+                    save=True, n_jobs=-1):
     """
     Calculates a matrix of firing rates and z scored fr (n_units x time) using 
     the 2 indices method, considering a centered window around each camara frame. 
@@ -419,38 +420,47 @@ def get_firing_rate(spike_times, bt, win=[-0.05, 0.05], n_jobs=-1):
     - spike_times: list of length n_units with np.ndarrays, shape (n_spikes)
     - bt: np.ndarray, shape (T)
     - win: list, [start,end]
+    - spk_count_path: str, path to load/save the spike counts
     - n_jobs: int, number of parallel jobs (default -1 = use all cores)
 
     Returns:
     - firing_rate: ndarray of shape (n_units, len(bt))
     - z_fr: ndarray of shape (n_units, len(bt))
     """
-
-    def compute_unit_rate(st):
-        firing_rate = np.zeros(len(bt))
-        start_idx, end_idx = 0, 0
-
-        for ti, t in enumerate(bt):
-            start_time = t + win[0]
-            end_time = t + win[1]
-
-            while start_idx < len(st) and st[start_idx] < start_time:
-                start_idx += 1
-
-            while end_idx < len(st) and st[end_idx] <= end_time:
-                end_idx += 1
-
-            firing_rate[ti] = end_idx - start_idx
-
-        return firing_rate
-
-    # Parallelize across neurons
-    firing_rate = Parallel(n_jobs=n_jobs)(
-        delayed(compute_unit_rate)(st) for st in spike_times
-    )
-
-    firing_rate = np.array(firing_rate) / (win[1] - win[0])
     
+    if os.path.isfile(spk_count_path):
+        spk_count = np.load(spk_count_path)
+    else:
+        def compute_unit_spk_count(st):
+            spk_count = np.zeros(len(bt), dtype="uint8")
+            start_idx, end_idx = 0, 0
+    
+            for ti, t in enumerate(bt):
+                start_time = t + win[0]
+                end_time = t + win[1]
+    
+                while start_idx < len(st) and st[start_idx] < start_time:
+                    start_idx += 1
+    
+                while end_idx < len(st) and st[end_idx] <= end_time:
+                    end_idx += 1
+    
+                spk_count[ti] = end_idx - start_idx
+    
+            return spk_count
+    
+        # Parallelize across neurons
+        spk_count = Parallel(n_jobs=n_jobs)(
+            delayed(compute_unit_spk_count)(st) for st in spike_times
+        )
+        
+        spk_count = np.array(spk_count, dtype="uint8")
+        
+        if save:
+            np.save(spk_count_path, spk_count)
+    
+    firing_rate = (spk_count / (win[1] - win[0])).astype(np.float32)
+        
     m_fr = np.expand_dims(np.mean(firing_rate, axis=1), axis=1)
     std_fr = np.expand_dims(np.std(firing_rate, axis=1), axis=1)    
     z_fr = (firing_rate - m_fr) / std_fr
@@ -988,6 +998,35 @@ def plot_ps_pc(all_ps, all_pc, sp):
     plt.savefig(os.path.join(sp,"plots", "ps_pc_corr.svg"))
     plt.show()
 
+def plot_sac_trayectory(saccades, pupil_center, sac_colors, sp, name,
+                        end=0.05, camara_fs = 200):
+    
+    end_indx = int(end * camara_fs)
+    for ci, c in enumerate(saccades):
+        indx = np.array(saccades[c])
+        
+        ylim = np.zeros_like(indx, dtype=float)
+        plt.scatter(pupil_center[0, indx], ylim, c=sac_colors[ci],
+                    edgecolors="none")
+        
+        ylim += end
+        plt.scatter(pupil_center[0, indx + end_indx], ylim, c=sac_colors[ci],
+                    edgecolors="none")
+        
+        tw = np.arange(0, end+ 1 / camara_fs, 1 / camara_fs)
+        for i in indx:
+            plt.plot(pupil_center[0, i: i + end_indx + 1], tw, 
+                     c=sac_colors[ci], alpha=0.8)
+        
+        for s in ['right', 'top']:
+            plt.gca().spines[s].set_visible(False)
+
+        plt.ylabel("time [s]")
+        plt.xlabel("pupil postion")
+    
+    plt.savefig(os.path.join(sp,"plots", name + "_sac_trayect.svg"))
+    plt.show()
+
 def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
                        vis_stim, colors,  exp, sp, fs = 30000):
 
@@ -1069,7 +1108,8 @@ def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
     plt.savefig(os.path.join(sp,"plots", name + "_corr.svg"))
     plt.show()
 
-def plot_metric_typ_cum(metric, cluster_type, colors, edges, name, sp):
+def plot_hist_typ(metric, cluster_type, colors, edges, 
+                  sp, name, m_name, cum=True, xlabel="r coef."):
     
     cluster_type = np.array(cluster_type)
     unique_type = np.unique(cluster_type)
@@ -1077,25 +1117,30 @@ def plot_metric_typ_cum(metric, cluster_type, colors, edges, name, sp):
     # Hist
     for neu_type in unique_type:
         metric_type = metric[(cluster_type == neu_type) & (~np.isnan(metric))]
-        plt.hist(metric_type, edges, 
-                 density=True, histtype='step', fill=False, cumulative=1,
-                 edgecolor=colors[neu_type], 
-                 label=f"{neu_type}" + str(len(metric_type)))
+        
+        plt.hist(metric_type, edges, density=True, histtype='step', 
+                 fill=False, cumulative=cum, edgecolor=colors[neu_type], 
+                 label=f"{neu_type}" + ", n = " + str(len(metric_type)))
     
-    plt.ylim([0,1])
-    plt.yticks([1, 0.5, 0])
-    plt.xlim([edges[0], edges[-1] - 1e-2])
-
-    plt.vlines(0,0,1,colors="gray",linestyles="dashed")
-    plt.xlabel("time [s]")
-    plt.ylabel("Cum density")
     plt.legend()
+    plt.xlim([edges[0], edges[-1] - 1e-2])
+    plt.xlabel(xlabel)
+    
+    if cum:
+        plt.ylim([0,1])
+        plt.yticks([1, 0.5, 0])
+        plt.ylabel("Cum density")
+    else:
+        plt.ylabel("Density")
+    
+    if not xlabel == "|r|":
+        ylim = plt.gca().get_ylim()
+        plt.vlines(0,ylim[0],ylim[1],colors="gray",linestyles="dashed")
     
     for s in ['right', 'top']:
         plt.gca().spines[s].set_visible(False)
-    plt.title(name)
     
-    plt.savefig(os.path.join(sp,"plots", name + "_cum.svg"))
+    plt.savefig(os.path.join(sp, "plots", name + "_hist_" + m_name + ".svg"))
     plt.show()
 
 def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):

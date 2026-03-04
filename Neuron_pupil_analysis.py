@@ -10,8 +10,8 @@ import Helper_functions as hf
 
 # TODO saccades per stimuli
 
-def ps_analysis(z_fr, pupil_size, cluster_type, colors, 
-                ps_corr_edges, plot_name, save_path, plot="none"):
+def corr_analysis(z_fr, pupil_size, cluster_type, colors, ps_corr_edges, 
+                  save_path, exp, plot="none", cum=True, m_name="norm_pupil_size"):
         
     if isinstance(plot, int):
 
@@ -24,12 +24,16 @@ def ps_analysis(z_fr, pupil_size, cluster_type, colors,
     # fr pupil size correlation
     neu_pupil_corr = hf.get_correlation(z_fr, pupil_size)
     
+    if m_name == "pupil x":
+        neu_pupil_corr = np.abs(neu_pupil_corr)
+        xlabel = "|r|"
+    else:
+        xlabel = "r coef."
+    
     if plot == "hist":
-        hf.plot_correlation_hist(neu_pupil_corr, colors, cluster_type, ps_corr_edges, 
-                                plot_name, save_path)
-    elif plot == "cum":
-        hf.plot_metric_typ_cum(neu_pupil_corr, cluster_type, colors, ps_corr_edges, 
-                                plot_name, save_path)
+        
+        hf.plot_hist_typ(neu_pupil_corr, cluster_type, colors, ps_corr_edges, 
+                         save_path, exp, m_name, cum, xlabel)
     
     return neu_pupil_corr
 
@@ -132,6 +136,7 @@ pupil_data_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data"
 spike_bundle_path = r"D:\NP data\analysis\data-single-unit"
 save_path = r"D:\NP data\Bernardo_awake_cx\Results"
 
+
 # Session information
 fs = 30000 # Hz
 camara_fs = 200 # Hz
@@ -139,25 +144,28 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "violet"]
 
               # Parameters 
-analysis = "sac_dir" # exp, ps_pc_corr, ps_corr, ps_ev, pc_sim, 
+analysis = "" # exp, ps_pc_corr, ps_corr, pc_corr, ps_ev, pc_sim, 
                      #sac_RT, sac_dir, sac_PCA
 period =  "all" # "chirp"
+
+fr_win_name = "_40ms_causal.npy"
 fr_win = [-0.04, 0] #[-0.05, 0.05] #
-ps_corr_edges = np.arange(-0.3, 0.32, 0.010)
+
+ps_corr_edges = np.arange(-0.3, 0.32, 0.01)
+pc_corr_edges = np.arange(0., 0.2, 0.005)
+
 units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
                     # [30,176,355] #sac 
                     # double_sac [135,146,297,407]
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = [experiments[0]]
+#experiments = [experiments[0]]
 
 results = defaultdict(list)
 
 # file loop
 for exp in tqdm(experiments, desc="Files processed"):
-
-    plot_name = exp + "_" + period
     
     ## Import
     
@@ -170,12 +178,12 @@ for exp in tqdm(experiments, desc="Files processed"):
     sync_cam, pupil_size, pupil_center, saccades = \
         hf.import_pupil_data(pupil_data_path, Spke_Bundle, exp, period)
     
-    
     if analysis == "exp":
         hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, save_path)
         hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
                               Spke_Bundle["events"], vis_stim, stim_colors, 
                               exp, save_path)
+        hf.plot_sac_trayectory(saccades, pupil_center, sac_colors, save_path, exp)
     
     elif analysis == "ps_pc_corr":
         results["ps"].append(pupil_size)
@@ -193,15 +201,28 @@ for exp in tqdm(experiments, desc="Files processed"):
         ## Firing rate
         
         tqdm.write("Firing rate...")
-        firing_rate, z_fr = hf.get_firing_rate(valid_spiketimes, sync_cam, fr_win)
+        spk_count = os.path.join(save_path, "spk_count", exp + fr_win_name)
+        firing_rate, z_fr = hf.get_firing_rate(valid_spiketimes, sync_cam, 
+                                               spk_count, win=fr_win)
         tqdm.write(analysis + " analysis...")
-         
+        
+        #fr_all[exp] = firing_rate
+        
         ## Pupil size
         
         if analysis == "ps_corr": # correlation
-            neu_pupil_corr = ps_analysis(z_fr, pupil_size, cluster_type, colors, 
-                                         ps_corr_edges, plot_name, save_path, 1)
+            neu_pupil_corr = \
+                corr_analysis(z_fr, pupil_size, cluster_type, colors, 
+                              ps_corr_edges, save_path, exp) # plot=1
             results["ps_corr"].append(neu_pupil_corr)
+        
+        if analysis == "pc_corr": # correlation
+            neu_pupil_corr = \
+                corr_analysis(z_fr, pupil_center[0,:], cluster_type, colors, 
+                              pc_corr_edges, save_path, exp, plot="hist", 
+                              m_name = "pupil x", cum=False)
+                
+            results["pc_corr"].append(neu_pupil_corr)
         
         elif analysis == "ps_ev": # size change events
             z_fr_ps = ps_events_analysis(pupil_size, firing_rate, valid_spiketimes, sync_cam, 
@@ -246,6 +267,7 @@ for exp in tqdm(experiments, desc="Files processed"):
 
         elif analysis == "conn":
             hf.plot_conn(connected_pairs, cluster_type, colors, save_path, exp)
+
 assert False
 
 
@@ -258,36 +280,6 @@ def find_double_coders(tw, sac_dir, tww = [-0.4,0.4]):
     
     return double_n
 
-
-def plot_sac_trayectory(saccades, pupil_center, sac_colors,
-                        end=0.05, camara_fs = 200):
-    
-    end_indx = int(end * camara_fs)
-    for ci, c in enumerate(saccades):
-        indx = np.array(saccades[c])
-        
-        ylim = np.zeros_like(indx, dtype=float)
-        plt.scatter(pupil_center[0, indx], ylim, c=sac_colors[ci],
-                    edgecolors="none")
-        
-        ylim += end
-        plt.scatter(pupil_center[0, indx + end_indx], ylim, c=sac_colors[ci],
-                    edgecolors="none")
-        
-        tw = np.arange(0, end+ 1 / camara_fs, 1 / camara_fs)
-        for i in indx:
-            plt.plot(pupil_center[0, i: i + end_indx + 1], tw, 
-                     c=sac_colors[ci], alpha=0.8)
-        
-        for s in ['right', 'top']:
-            plt.gca().spines[s].set_visible(False)
-
-        plt.ylabel("time [s]")
-        plt.xlabel("pupil postion")
-        
-    plt.show()
-
-plot_sac_trayectory(saccades, pupil_center, sac_colors)
 
 # plot coding and connectivity
 
