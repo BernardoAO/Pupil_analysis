@@ -842,6 +842,51 @@ def noise_PCA(fr, trial_fr, types, n_components = 10):
 
     return exp_var
 
+def pca_var_sig(pca_results_list, exp_var_n_list, n_p=100, p = 0.051):
+    """
+    Calculates the significance of PCA weights using a paired t-test with 
+    permutations.
+
+    Parameters:
+    pca_results_list : list, len (n_exp)
+    exp_var_n_list : list, len (n_exp)
+    n_p : int
+    p : float
+
+    Returns:
+    sig_nc: dic of int for each c_type.
+    
+    """
+    
+    def paired_t(x, y):
+        d = x - y
+        return np.mean(d) / (np.std(d, ddof=1) / np.sqrt(len(d)))
+    
+    types = exp_var_n_list[0].keys()
+    sig_nc = {}
+    
+    for ti, typ in enumerate(types):       
+        
+        exp_var_all = np.array([pr[typ]["exp_var"] for pr in pca_results_list]) 
+        exp_var_n_all = np.array([evn[typ] for evn in exp_var_n_list])
+        
+        sig = True
+        nc = 0
+        while sig and nc < exp_var_all.shape[1]:
+            
+            permutations = stats.permutation_test(
+                (exp_var_all[:,nc], exp_var_n_all[:,nc]), statistic=paired_t, 
+                n_resamples=n_p, random_state=0, alternative='greater')
+            
+            if permutations.pvalue < p:
+                nc += 1
+            else:
+                sig = False
+        
+        sig_nc[typ] = nc - 1
+    
+    return sig_nc
+
 def get_t_significance(all_ps_corr, all_types_cat, n_p=1000):
     """
     Gets significance using a permutation t-test for TCA>NW and NW>BW.
@@ -1426,7 +1471,7 @@ def plot_pca(tw, pca_results, colors, sp, multi_d=False, name="PCA_sc.svg",
         plt.tight_layout()
         plt.show()
 
-def plot_pca_var(pca_results, exp_var_n, colors, sp, name):
+def plot_pca_var(pca_results, exp_var_n, colors, sp, name, sig_nc=[]):
     types = colors.keys()
     
     fig, axes = plt.subplots(len(types), 1, figsize=(10, 8))
@@ -1438,6 +1483,10 @@ def plot_pca_var(pca_results, exp_var_n, colors, sp, name):
             exp_var_n_all = np.array([evn[typ] for evn in exp_var_n]) # (n_m, nc)
             dif = (exp_var_all - exp_var_n_all).T #/ exp_var_n[ti,:,:]
             axes[ti].plot(dif, color=colors[typ], marker="o")
+            
+            ylim = axes[ti].get_ylim()
+            axes[ti].hlines(ylim[1], -0.1, sig_nc[typ]+0.1, color="black")
+            
             axes[ti].hlines(0,0,exp_var_all.shape[1], color="gray", linestyle="--")
             axes[ti].set_ylabel("normalized explained variance")
             
@@ -1462,19 +1511,19 @@ def plot_pca_var(pca_results, exp_var_n, colors, sp, name):
 
     plt.show()
 
-def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.02):
+def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.01):
     types = colors.keys()
     
     fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
     for c in range(nc):
-        bins = np.arange(edges[0],edges[1],step)
+        bins = np.arange(edges[0],edges[1], step)
         for ti, typ in enumerate(types):
             axes[c].hist(pca_results[typ]["w"][c,:], bins, histtype='step', 
-                         fill=False, edgecolor=colors[typ])
+                         fill=False, edgecolor=colors[typ], density=True)
         
         ylim = axes[c].get_ylim()[1]
         axes[c].vlines(0,0,ylim,colors="gray",linestyles="dashed")
-        axes[c].set_ylabel("count PCA " + str(c + 1))
+        axes[c].set_ylabel("density PCA " + str(c + 1))
         
         for s in ['right', 'top']:
             axes[c].spines[s].set_visible(False)

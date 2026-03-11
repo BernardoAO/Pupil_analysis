@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tqdm import tqdm
 import Helper_functions as hf
-#assert False
+assert False
 
 # TODO saccades per stimuli
 
@@ -144,7 +144,7 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "violet"]
 
               # Parameters 
-analysis = "" # exp, ps_pc_corr, ps_corr, pc_corr, ps_ev, pc_sim, 
+analysis = "sac_PCA" # exp, ps_pc_corr, ps_corr, pc_corr, ps_ev, pc_sim, 
                      #sac_RT, sac_dir, sac_PCA
 period =  "all" # "chirp"
 
@@ -268,25 +268,6 @@ for exp in tqdm(experiments, desc="Files processed"):
         elif analysis == "conn":
             hf.plot_conn(connected_pairs, cluster_type, colors, save_path, exp)
 
-assert False
-
-
-def find_double_coders(tw, sac_dir, tww = [-0.4,0.4]):
-    double_n = []
-    for n in range(sac_dir.shape[0]):
-        t_mask = (tw > tww[0]) & (tw <= tww[1])
-        if (0 in sac_dir[n, t_mask]) and (1 in sac_dir[n, t_mask]):
-            double_n.append(n)
-    
-    return double_n
-
-
-# plot coding and connectivity
-
-n = np.bincount(connected_pairs[:,1]).argmax()
-hf.plot_coding(n, tw, sac_dir, cluster_type, connected_pairs, 
-               colors, sac_colors)
-
 
 ## All plots
 
@@ -349,8 +330,10 @@ else:
         # variance
         pca_results_list = [var[0] for var in results["PCA_var"]]
         exp_var_n_list = [var[1] for var in results["PCA_var"]]
+        
+        sig_nc = hf.pca_var_sig(pca_results_list, exp_var_n_list)
         hf.plot_pca_var(pca_results_list, exp_var_n_list, 
-                        colors, save_path, "all")
+                        colors, save_path, "all", sig_nc)
         
         # weights
         hf.plot_weights(pca_results, colors, save_path)    
@@ -358,6 +341,22 @@ else:
 
 
 """
+def find_double_coders(tw, sac_dir, tww = [-0.4,0.4]):
+    double_n = []
+    for n in range(sac_dir.shape[0]):
+        t_mask = (tw > tww[0]) & (tw <= tww[1])
+        if (0 in sac_dir[n, t_mask]) and (1 in sac_dir[n, t_mask]):
+            double_n.append(n)
+    
+    return double_n
+
+
+# plot coding and connectivity
+
+n = np.bincount(connected_pairs[:,1]).argmax()
+hf.plot_coding(n, tw, sac_dir, cluster_type, connected_pairs, 
+               colors, sac_colors)
+
 #
 def plot_pref_sc_conn(connected_pairs, pref_sc, rts_sc, cluster_type,
                       save_path, exp, nc=[1,1], pre_post=["TCA","NW"]):
