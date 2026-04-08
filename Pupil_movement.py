@@ -16,11 +16,12 @@ fps = 200 # Hz
 smooth_window = 10
 output_variables = ["session", "awake","ROIs_smooth", "pupil_center", 
                     "pupil_size", "saccade_indx"]
+exception_files_tv = ["cam2_2023-04-17-13-31-32", "cam2_2023-04-13-12-42-47"]
 
 os.chdir(data_path)
 all_exp = [d for d in os.listdir()]
 
-work_exp = ['2023-04-18_12-10-34']
+work_exp = ['2023-04-13_12-35-02']
 
 for exp in work_exp:
     
@@ -39,7 +40,11 @@ for exp in work_exp:
             DLC_data = pickle.load(f)
         
         n_frames = DLC_data["metadata"]['nframes']
+        
         tv = np.arange(0, n_frames / fps, 1 / fps)
+        if file[:24] in exception_files_tv:
+            tv = tv[:-1]
+            
         ROIs = np.zeros((n_pupil + n_eyelid, 2, n_frames)) # 12, (x,y), n_frames
         confidence = np.zeros((n_pupil + n_eyelid, n_frames)) 
         keys = list(DLC_data.keys())
@@ -90,7 +95,6 @@ for exp in work_exp:
         pupil_data.at[row_index, "pupil_center"] = pupil_center
         pupil_data.at[row_index, "pupil_size"] = pupil_size_clean
         pupil_data.at[row_index, "saccade_indx"] = saccade_indx
-        assert False
     
 
     pupil_data.to_pickle(pupil_data_path)

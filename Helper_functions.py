@@ -5,8 +5,11 @@ from scipy import interpolate
 import scipy.signal as signal
 from scipy import stats
 import pandas as pd
+
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
+from sklearn.feature_selection import mutual_info_classif
+
 import os
 import ast
 from tqdm import tqdm
@@ -40,7 +43,7 @@ def handle_exceptions(ROIs_smooth, tv, session):
     if session == "2023-03-16-11-14-37":
         mask = tv < 0.15 * 60
         ROIs_smooth[:,:,mask] = np.nan
-    if session[:10] == "2023-04-18":
+    if session[:10] == "2023-03-22" or session[:7] == "2023-04":
         ROIs_smooth = np.flip(ROIs_smooth, axis=1)
     return ROIs_smooth
 
@@ -411,7 +414,7 @@ def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, connected_pairs_all,
     return valid_spiketimes, cluster_type, c_types, connected_pairs
 
 def get_firing_rate(spike_times, bt, spk_count_path, win=[-0.05, 0.05], 
-                    save=True, n_jobs=-1):
+                    n_jobs=-1, pre_load=True):
     """
     Calculates a matrix of firing rates and z scored fr (n_units x time) using 
     the 2 indices method, considering a centered window around each camara frame. 
@@ -428,7 +431,7 @@ def get_firing_rate(spike_times, bt, spk_count_path, win=[-0.05, 0.05],
     - z_fr: ndarray of shape (n_units, len(bt))
     """
     
-    if os.path.isfile(spk_count_path):
+    if pre_load == True and os.path.isfile(spk_count_path):
         spk_count = np.load(spk_count_path)
     else:
         def compute_unit_spk_count(st):
@@ -456,7 +459,7 @@ def get_firing_rate(spike_times, bt, spk_count_path, win=[-0.05, 0.05],
         
         spk_count = np.array(spk_count, dtype="uint8")
         
-        if save:
+        if pre_load:
             np.save(spk_count_path, spk_count)
     
     firing_rate = (spk_count / (win[1] - win[0])).astype(np.float32)
@@ -603,21 +606,22 @@ def get_fr_aligned(fr, align_indx, win=[-5,5], camara_fs = 200):
     return trial_fr, mean_fr, tw
 
 def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05, 
-                       n_p = 1000, n_tw = 5, camara_fs = 200):
+                       n_p = 1000, n_tw = 5, camara_fs = 200, permute=True):
     """
     Obtains the reaction times for each neuron, with Mann-Whitney U and AUC
-    with permutation significance.
+    with permutation significance. Returns the time and direction of the
+    response.
     
     Parameters:    
     fr : np.ndarray, shape (n_neu, T)
     align_indx: np.ndarray, shape (n_events)
+    win: [basal_start, basal_end, post_end]  
     p: float, p value
     n_p: int, number of permutations
     n_tw: int, number of consecutive windows with significant p
-    win: [basal_start, basal_end, post_end]  
 
     Returns:
-    rts : np.ndarray, shape (n_neu)
+    rts : np.ndarray, shape (n_neu,2) [time, dir]
     """
     def auc_stat(A, B):
         y_true = np.concatenate([np.zeros_like(A), 
@@ -630,7 +634,7 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
     tiw_basal = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)   
     tiw_post = np.arange(win[1]*camara_fs, win[2]*camara_fs, dtype=int)    
          
-    rts = np.full(n_unit, np.nan)
+    rts = np.full((n_unit,2), np.nan)
     
     for n in tqdm(range(n_unit)):
         
@@ -643,31 +647,61 @@ def get_response_times(fr, align_indx, win=[-0.5,-0.2, 0.5], p = 0.05,
         
         ti = 0
         sig_tw = 0
-        while ti < len(tiw_post) and np.isnan(rts[n]):
+        while ti < len(tiw_post) and np.isnan(rts[n,0]):
             post_fr_t = post_fr[:,ti]
             
             U, p_t = stats.mannwhitneyu(basal_fr_f, post_fr_t, 
                                         alternative='two-sided')
 
             if p_t < p:
-                
-                permutations = \
-                    stats.permutation_test((basal_fr_f, post_fr_t), batch=n_p,
-                                           statistic=auc_stat, n_resamples=n_p, 
-                                           random_state=0, alternative='two-sided')
-                if permutations.pvalue < p:
-                    sig_tw += 1
+
+                if permute:
+                    permutations = stats.permutation_test(
+                        (basal_fr_f, post_fr_t), batch=n_p, statistic=auc_stat,
+                        n_resamples=n_p, random_state=0, alternative='two-sided')
+                    
+                    if permutations.pvalue < p:
+                        sig_tw += 1
+                    else:
+                        sig_tw = 0
                 else:
-                    sig_tw = 0
+                    sig_tw += 1
                     
                 if sig_tw == n_tw:
-                    rts[n] = (tiw_post[ti] - n_tw) / camara_fs
+                    rts[n,0] = (tiw_post[ti] - n_tw) / camara_fs
+                    rts[n,1] = np.sign(np.mean(post_fr_t) - 
+                                       np.mean(basal_fr_f))
             else:
                 sig_tw = 0
             
             ti += 1
             
     return rts
+
+def get_MI(trial_fr, s):
+    """
+    Mutual Information of the fr about s 
+    
+    Parameters:
+    trial_fr: list of np.arrays, shape (n_neu, Tw, n_events)
+    s : np.ndarray, shape (n_events_all)
+
+    Returns:            
+    mutual_info : np.ndarray, shape (n_neu, Tw)
+    """
+    
+    trial_fr = np.concatenate(trial_fr, axis=2)
+    N, T, _ = trial_fr.shape
+    mutual_info = np.zeros((N,T))
+    
+    for n in range(N):
+        for t in range(T):
+            r_t = trial_fr[n,t,:].reshape(-1, 1)
+            
+            mi = mutual_info_classif(r_t, s, discrete_features=False)
+            mutual_info[n,t] = mi[0]
+    
+    return mutual_info
 
 def get_class_coding(fr, align_indx1, align_indx2, win=[-0.25, 1], 
                      p = 0.05, n_p = 1000, n_tw = 5, camara_fs = 200):
@@ -980,7 +1014,7 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     
     fig.suptitle(name)
     plt.tight_layout()
-    #plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
+    plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
 
 def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, 
@@ -1188,6 +1222,42 @@ def plot_hist_typ(metric, cluster_type, colors, edges,
     plt.savefig(os.path.join(sp, "plots", name + "_hist_" + m_name + ".svg"))
     plt.show()
 
+def plot_sc_hist(rts_sc, c_types, edges, sp):
+    
+    signs = [-1,1]
+    alphas = [1,0.7]
+    unique_type = np.unique(c_types)
+    
+    for neu_type in unique_type:
+        type_mask = c_types == neu_type
+        rts_sc_t = rts_sc[:,type_mask,:]
+        for p in range(2):
+            for s in signs:
+                sign_mask = rts_sc_t[p,:,1] == s
+                
+                rts_sc_s = rts_sc_t[p,sign_mask,0]
+                
+                
+                plt.hist(rts_sc_s,edges,histtype='step', 
+                         weights= s * np.ones_like(rts_sc_s), 
+                         edgecolor=neu_type,alpha=alphas[p])
+            
+        for s in ['right', 'top']:
+            plt.gca().spines[s].set_visible(False)
+            
+        plt.xlabel("time [s]")
+        plt.xlim([edges[0],edges[-1]])
+        plt.gca().spines['bottom'].set_position(('data', 0))
+        plt.gca().set_xticklabels([])
+        
+        plt.ylabel("count")
+        ylim = plt.gca().get_ylim()
+        plt.vlines(0,ylim[0],ylim[1],colors="grey", linestyle="dashed")
+        plt.ylim(ylim)
+        
+        plt.savefig(os.path.join(sp,"plots", neu_type + "_rt_hist.svg"))
+        plt.show()
+
 def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):
     bins_1d = (edges[1:] + edges[:-1]) / 2
     nx = len(bins_1d)
@@ -1287,12 +1357,10 @@ def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp,
     plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
     plt.show()
 
-def plot_raster(st, sync_cam, align_indx, spk_colors, 
+def plot_raster(st, sync_cam, align_indx, fr_colors, spk_colors, 
                 tw, mean_fr, c_types, cluster_type, rts=[], coding = np.array([]),
                 sp="none", name="fr_aligned.png"):
-    
-    unique_colors = np.unique(np.array(spk_colors)) #temp, nasal
-    
+        
     for n, spikes in enumerate(st):
 
         aligned_spikes = []
@@ -1312,19 +1380,19 @@ def plot_raster(st, sync_cam, align_indx, spk_colors,
         axes[0].axis('off')
         
         if mean_fr.ndim == 3: # saccades
-            axes[1].plot(tw, mean_fr[n,:,0], color=unique_colors[0])
-            axes[1].plot(tw, mean_fr[n,:,1], color=unique_colors[1])
+            axes[1].plot(tw, mean_fr[n,:,0], color=fr_colors[0])
+            axes[1].plot(tw, mean_fr[n,:,1], color=fr_colors[1])
             
             if rts:
                 ylim = axes[1].get_ylim()
-                axes[1].vlines([rt[n] for rt in rts], ylim[0], ylim[1],
-                               colors = unique_colors, linestyle="--")
+                axes[1].vlines([rt[n,0] for rt in rts], ylim[0], ylim[1],
+                               colors = fr_colors, linestyle="--", alpha=0.8)
             
             elif not coding.size == 0:
                 tw_ylim = np.ones_like(tw) * axes[1].get_ylim()[1]      
                 for c in range(2):
                     code = coding[n,:] == c                             
-                    axes[1].scatter(tw[code], tw_ylim[code], c=unique_colors[c],
+                    axes[1].scatter(tw[code], tw_ylim[code], c=fr_colors[c],
                                     edgecolors="none")
 
             axes[1].spines['bottom'].set_color(c_types[n])
@@ -1391,7 +1459,7 @@ def plot_angle(pc_angles):
     ax.set_yticklabels([])
     plt.show()
     
-def plot_event(events, b, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
+def plot_event(events, b, sac_colors, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
     
     tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
     tib = np.arange(win[0]*camara_fs, 0, dtype=int)
@@ -1400,10 +1468,10 @@ def plot_event(events, b, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
     if isinstance(events, dict):
         for e in events["temporal"]:
             event_b = b[e + tiw] - np.mean(b[e + tib])
-            plt.plot(tw, event_b, color="navy")
+            plt.plot(tw, event_b, color=sac_colors[0])
         for e in events["nasal"]:
             event_b = b[e + tiw] - np.mean(b[e + tib])        
-            plt.plot(tw, event_b, color="violet")    
+            plt.plot(tw, event_b, color=sac_colors[1])    
 
     else:
         for e in events:
@@ -1417,8 +1485,8 @@ def plot_event(events, b, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
     plt.savefig(os.path.join(sp,"plots", exp + name + ".svg"))
     plt.show()
     
-def plot_pca(tw, pca_results, colors, sp, multi_d=False, name="PCA_sc.svg", 
-             nc=3):
+def plot_pca(tw, pca_results, colors, pr_colors, sp,
+             multi_d=False, name="PCA_sc.svg", nc=3):
     types = colors.keys()
     if not multi_d:
         for ti, typ in enumerate(types):       
@@ -1427,19 +1495,20 @@ def plot_pca(tw, pca_results, colors, sp, multi_d=False, name="PCA_sc.svg",
             for c in range(nc): 
                 proj = pca_results[typ]["projection"]
                 
-                axes[c].plot(tw, proj[c,:,0], color="navy")
-                axes[c].plot(tw, proj[c,:,1], color="violet")
+                axes[c].plot(tw, proj[c,:,0], color=pr_colors[0])
+                axes[c].plot(tw, proj[c,:,1], color=pr_colors[1])
                 
                 ylim = axes[c].get_ylim()
                 axes[c].vlines(0, ylim[0], ylim[1], 
                                 colors="k", linestyles="--", alpha=0.3)
+                axes[c].set_xlim([tw[0],tw[-1]])
                 
                 axes[c].tick_params(axis='y', labelcolor=colors[typ])
-                axes[c].set_ylabel("PC" + str(c+1))
+                axes[c].set_ylabel("PC" + str(c+1), color=colors[typ])
                 if c < nc - 1:
                     axes[c].set_xticks([])
                 else:
-                    axes[c].set_xlabel("time [s]")
+                    axes[c].set_xlabel("time [s]", color=colors[typ])
                     axes[c].tick_params(axis='x', labelcolor=colors[typ])
                     
                 for s in ['right', 'top']:
@@ -1538,14 +1607,15 @@ def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.01):
 
 def plot_types(experiments, all_types, colors, sp = "none"):
     
-    exp = [e[:10] for e in experiments]
+    exp = [e[2:10] if not e == "2023-03-15_15-23-14" else
+           e[2:10] + "_2" for e in experiments]
     all_counts = {n_type: [] for n_type in colors.keys()}
     for e in range(len(exp)):
         unique, counts = np.unique(all_types[e], return_counts=True)
         for n,n_type in enumerate(unique):
             all_counts[n_type].append(counts[n])     
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(10,8))
     bottom = np.zeros(len(exp))
     
     for types, color in colors.items():
