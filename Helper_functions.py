@@ -219,7 +219,7 @@ def get_stims(Spke_Bundle):
     """
     vis_stim_all = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
                 "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
-                "csd", "chirp"]
+                "csd", "chirp","sg"]
     cmap = plt.get_cmap('jet', len(vis_stim_all))    
     
     vis_stim = []
@@ -1017,8 +1017,8 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
 
-def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, 
-             name, sp, fs = 30000, y = 1.0, lw=0.25):
+def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, name, sp,
+             saccades=[], sac_colors=[], fs = 30000, y = 1.0, lw=0.25):
     
     # Visual stimulus
     ns = len(vis_stim)
@@ -1040,7 +1040,15 @@ def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors,
     cmap = plt.get_cmap('Greys', periods.shape[0]+1)
     colors = [cmap(i+1) for i in range(periods.shape[0])]
     for p in range(periods.shape[0]):
-        plt.plot(periods[p,:], [y + 0.1, y + 0.1], color=colors[p])    
+        plt.plot(periods[p,:], [y + 0.2, y + 0.2], color=colors[p])
+    
+    if saccades:
+        for si,s in enumerate(saccades):
+            sac = np.array(saccades[s])
+            sac_times = (sync_cam[sac] - sync_cam[0]) / 60
+            plt.vlines(sac_times, y + 0.05 + si*0.05, y + 0.1 + si*0.05, 
+                       colors=sac_colors[si], linewidth=0.5)
+    
     plt.legend()
     plt.xlabel("t")
     plt.yticks([])
@@ -1414,8 +1422,7 @@ def plot_raster(st, sync_cam, align_indx, fr_colors, spk_colors,
         if sp == "none":
             plt.show()
         else:
-            plt.savefig(os.path.join(sp,"plots", "Neurons",
-                                     str(n) + "_" + cluster_type[n] + 
+            plt.savefig(os.path.join(sp, str(n) + "_" + cluster_type[n] + 
                                      "_" + name))
             plt.close(fig)
 

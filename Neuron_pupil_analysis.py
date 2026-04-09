@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tqdm import tqdm
 import Helper_functions as hf
-assert False
+#assert False
 
 # TODO saccades per stimuli
 
@@ -84,10 +84,11 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     trial_fr = [trial_fr_t, trial_fr_n]
     fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
     
-    if plot == "raster":            
+    if plot == "raster":
+        plts_sp = os.path.join(save_path, "plots", "Neurons", "sac", exp)
         hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, sac_colors, 
                        msc_colors, tw, fr_sc, c_types, cluster_type, 
-                       sp = save_path, name="_sac.png")
+                       sp = plts_sp, name="sac.png")
 
     if an_type == "RT":
 
@@ -153,8 +154,9 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "darkorange"]
 
 # Parameters 
-analysis = "exp_neu" # exp, exp_neu, ps_pc_corr, ps_corr, pc_corr, ps_ev, pc_sim, 
-                     #sac_RT, sac_MI, sac_dir, sac_PCA
+analysis = "exp" # exp, exp_neu, ps_pc_corr,
+                     # ps_corr, pc_corr, ps_ev, pc_sim, 
+                     # sac_RT, sac_MI, sac_dir, sac_PCA
 period =  "all" # "chirp"
 
 fr_win_name = "_100ms_causal.npy"
@@ -173,7 +175,7 @@ pre_load = False if units_for_plot else True
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-#experiments = ["2022-12-20_15-08-10"]#,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
+experiments = ["2022-12-20_15-08-10"]#,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
 
 results = defaultdict(list)
 
@@ -190,11 +192,12 @@ for exp in tqdm(experiments, desc="Files processed"):
     # merge pupil data for the exp
     sync_cam, pupil_size, pupil_center, saccades = \
         hf.import_pupil_data(pupil_data_path, Spke_Bundle, exp, period)
-    
+
     if analysis == "exp":
         # Stimuli
-        hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, save_path)
-        
+        hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, 
+                    save_path, saccades, sac_colors)
+        assert False
         # Pupil size
         hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
                               Spke_Bundle["events"], vis_stim, stim_colors, 
@@ -300,7 +303,7 @@ for exp in tqdm(experiments, desc="Files processed"):
             tw, fr_sc, pca_results, exp_var_n = \
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
-                                 save_path, cluster_type, colors, exp)
+                                 save_path, cluster_type, colors, exp, plot="raster")
                 
             results["fr_sc"].append(fr_sc)
             results["PCA_var"].append([pca_results, exp_var_n])
@@ -318,9 +321,7 @@ else:
     
     if analysis == "exp_neu": # n 
         hf.plot_types(experiments, results["types"], colors, save_path)
-        
-    
-    
+            
     elif analysis == "ps_corr":
         all_ps_corr = np.concatenate(results["ps_corr"])
         hf.plot_metric_typ_cum(all_ps_corr, all_types_cat, colors, 
@@ -384,7 +385,8 @@ else:
         # weights
         hf.plot_weights(pca_results, colors, save_path)    
 
-"""1
+"""
+
 indices = [8,41,48,87,74,229,230,273,385,407,355]
 mask = np.zeros(len(rt_mask), dtype=bool)
 mask[indices] = True
@@ -438,7 +440,6 @@ def filter_mutual_info(mi, win_m = 3, thresh = 0.1,  f_type="median"):
 
 filtered_mi = filter_mutual_info(mutual_info_all, f_type="thresh")
 plot_mean_mi(tw, filtered_mi, mask, all_types_cat, colors)
-
 
 def find_double_coders(tw, sac_dir, tww = [-0.4,0.4]):
     double_n = []
