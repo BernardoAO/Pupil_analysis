@@ -470,6 +470,40 @@ def get_firing_rate(spike_times, bt, spk_count_path, win=[-0.05, 0.05],
     
     return firing_rate, z_fr
 
+def get_sac_amp(spikes, sync_cam, saccades, pupil_x,
+                win=[-0.2,0.2], camara_fs=200):
+    """
+    Calculates the difference of pupil x and firing rate for the saccades. 
+
+    Parameters:
+    spikes : list lenght(N)
+    sync_cam : np.array, shape (T)
+    saccades :  np.array, shape (n_sac)
+    pupil_x : np.array, shape (T)
+    Returns
+    -------
+    delta_x : np.array, shape (n_sac)
+    delta_fr : np.array, shape (N, n_sac)
+    
+
+    """
+    
+    wini = np.array([t * camara_fs for t in win], dtype=int)
+    delta_x = np.zeros((saccades.shape[0])) 
+    delta_fr = np.zeros((len(spikes), saccades.shape[0])) 
+    
+    for si,s in enumerate(saccades):
+        delta_x[si] = pupil_x[s + wini[1]] - pupil_x[s + wini[0]]
+        
+        for n, st in enumerate(spikes):
+            st_alg = np.array(st) - sync_cam[s]
+            pre_fr = np.sum((st_alg > win[0]) & (st_alg <= 0)) / np.abs(win[0])
+            post_fr = np.sum((st_alg > 0) & (st_alg <= win[1])) / win[1]
+            
+            delta_fr[n, si] = post_fr - pre_fr
+
+    return delta_x, delta_fr
+
 def get_mean_fr_size(fr, state,  start = 0.1, stop = 0.3, step = 0.02, 
                      per=[5,95]):
     """
@@ -1345,6 +1379,27 @@ def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):
                                      str(n) + name +".png"))
             plt.close(fig)
 
+def plot_sac_amp_ex(delta_x, delta_fr, sca_fr, n_plot, cluster_type, colors,
+                    sp, exp):
+    
+    for n in n_plot:
+        plt.scatter(delta_x, delta_fr[n,:], c=colors[cluster_type[n]])
+        xlim = plt.gca().get_xlim()
+        x = np.arange(xlim[0], xlim[1], 0.01)
+        plt.plot(x, x * sca_fr[n,0] + sca_fr[n,1], color="blue")
+        plt.xlabel("Δx")
+        plt.ylabel("Δfr")
+        
+        for ax in ['left', 'bottom']:
+            plt.gca().spines[ax].set_position('zero')
+    
+        for ax in ['right', 'top']:
+            plt.gca().spines[ax].set_color('none')
+        plt.gca().xaxis.set_label_position('top')
+        plt.gca().yaxis.set_label_position('right')
+        plt.savefig(os.path.join(sp,"plots", exp + "_" + str(n) +".svg"))
+        plt.show()
+
 def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp, 
                 ylim=[-1,3]):
 
@@ -1365,11 +1420,11 @@ def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp,
     plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
     plt.show()
 
-def plot_raster(st, sync_cam, align_indx, fr_colors, spk_colors, 
+def plot_raster(spikes_all, sync_cam, align_indx, fr_colors, spk_colors, 
                 tw, mean_fr, c_types, cluster_type, rts=[], coding = np.array([]),
                 sp="none", name="fr_aligned.png"):
         
-    for n, spikes in enumerate(st):
+    for n, spikes in enumerate(spikes_all):
 
         aligned_spikes = []
         for ti in align_indx:

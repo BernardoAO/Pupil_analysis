@@ -55,6 +55,34 @@ def ps_events_analysis(pupil_size, fr, valid_spiketimes, sync_cam, c_types,
         
     return fr_ps
 
+def sac_amp_analysis(saccades, pupil_center, valid_spiketimes, sync_cam, 
+                     save_path, cluster_type, colors, exp, plot="none",
+                     dx = 0.05, n_plot = []):
+    
+    saccades_all = np.concatenate((saccades["temporal"], 
+                                saccades["nasal"]), axis=0)
+    
+    delta_x, delta_fr = hf.get_sac_amp(valid_spiketimes, sync_cam, 
+                                       saccades_all, pupil_center[0,:])
+    
+    sca_fr = np.array([np.polyfit(delta_x, neu, 1) for neu in delta_fr])
+    abs_sca_fr = np.array([np.polyfit(np.abs(delta_x), neu, 1) 
+                           for neu in delta_fr])
+
+    if plot == "hist": 
+        edges = np.arange(-1, 1+dx, dx)
+        hf.plot_hist_typ(sca_fr[:,0], cluster_type, colors, edges, 
+                         save_path, exp, "sac_amp", cum=False)
+        hf.plot_hist_typ(abs_sca_fr[:,0], cluster_type, colors, edges, 
+                         save_path, exp, "sac_amp", cum=False)
+        
+    if plot == "example":
+        hf.plot_sac_amp_ex(delta_x, delta_fr, sca_fr, n_plot, cluster_type, 
+                        colors, save_path, exp)
+        
+    return sca_fr
+
+
 def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
                 save_path, center_edges = np.arange(105, 145, 5)):
     
@@ -154,7 +182,7 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "darkorange"]
 
 # Parameters 
-analysis = "exp" # exp, exp_neu, ps_pc_corr,
+analysis = "sac_amp" # exp, exp_neu, ps_pc_corr,
                      # ps_corr, pc_corr, ps_ev, pc_sim, 
                      # sac_RT, sac_MI, sac_dir, sac_PCA
 period =  "all" # "chirp"
@@ -197,7 +225,6 @@ for exp in tqdm(experiments, desc="Files processed"):
         # Stimuli
         hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, 
                     save_path, saccades, sac_colors)
-        assert False
         # Pupil size
         hf.plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, 
                               Spke_Bundle["events"], vis_stim, stim_colors, 
@@ -264,7 +291,12 @@ for exp in tqdm(experiments, desc="Files processed"):
             pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
                         save_path)
         
-        elif analysis == "sac_RT": # saccades                
+        elif analysis == "sac_amp": # saccades
+            sca_fr = sac_amp_analysis(saccades, pupil_center, valid_spiketimes, 
+                                      sync_cam, save_path, cluster_type, 
+                                      colors, exp, plot="hist", n_plot = [26,355])
+            
+        elif analysis == "sac_RT":
             tw, fr_sc, rts_sc, pref_sc = \
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
@@ -308,6 +340,7 @@ for exp in tqdm(experiments, desc="Files processed"):
             results["fr_sc"].append(fr_sc)
             results["PCA_var"].append([pca_results, exp_var_n])
         
+assert False
 
 ## All plots
 
