@@ -57,7 +57,7 @@ def ps_events_analysis(pupil_size, fr, valid_spiketimes, sync_cam, c_types,
 
 def sac_amp_analysis(saccades, pupil_center, valid_spiketimes, sync_cam, 
                      save_path, cluster_type, colors, exp, plot="none",
-                     dx = 0.05, n_plot = []):
+                     dx = 0.05, n_plot = [], m_names=["x","|x|","sign(x)"]):
     
     saccades_all = np.concatenate((saccades["temporal"], 
                                 saccades["nasal"]), axis=0)
@@ -65,22 +65,30 @@ def sac_amp_analysis(saccades, pupil_center, valid_spiketimes, sync_cam,
     delta_x, delta_fr = hf.get_sac_amp(valid_spiketimes, sync_cam, 
                                        saccades_all, pupil_center[0,:])
     
-    sca_fr = np.array([np.polyfit(delta_x, neu, 1) for neu in delta_fr])
-    abs_sca_fr = np.array([np.polyfit(np.abs(delta_x), neu, 1) 
-                           for neu in delta_fr])
-
+    
+    #models, r2s = hf.lin_model_sac(delta_x, delta_fr, m_names)
+    
+    ws = hf.lin_model_sac_sig(delta_x, delta_fr)
+    return ws
+    
+    
     if plot == "hist": 
         edges = np.arange(-1, 1+dx, dx)
-        hf.plot_hist_typ(sca_fr[:,0], cluster_type, colors, edges, 
-                         save_path, exp, "sac_amp", cum=False)
-        hf.plot_hist_typ(abs_sca_fr[:,0], cluster_type, colors, edges, 
-                         save_path, exp, "sac_amp", cum=False)
-        
+        for m_name, m  in models.items():
+            hf.plot_hist_typ(m[:,0], cluster_type, colors, edges, save_path,
+                             exp, "sac_amp", xlabel=m_name, cum=False)
+    
+    if plot == "hist_r2":
+        edges = np.arange(0, 0.5+dx, dx)
+        for i in range(len(m_names)):
+            hf.plot_hist_typ(r2s[:,i], cluster_type, colors, edges, save_path,
+                             exp, "sac_amp", xlabel=m_names[i], cum=False)
+    
     if plot == "example":
-        hf.plot_sac_amp_ex(delta_x, delta_fr, sca_fr, n_plot, cluster_type, 
+        hf.plot_sac_amp_ex(delta_x, delta_fr, models["x"], n_plot, cluster_type, 
                         colors, save_path, exp)
         
-    return sca_fr
+    return models, r2s
 
 
 def pc_analysis(firing_rate, pupil_center, cluster_type, colors, plot_name, 
@@ -203,7 +211,7 @@ pre_load = False if units_for_plot else True
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = ["2022-12-20_15-08-10"]#,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
+experiments = ["2022-12-20_15-08-10","2023-03-16_12-16-07","2023-04-18_12-10-34"]#
 
 results = defaultdict(list)
 
@@ -292,9 +300,13 @@ for exp in tqdm(experiments, desc="Files processed"):
                         save_path)
         
         elif analysis == "sac_amp": # saccades
-            sca_fr = sac_amp_analysis(saccades, pupil_center, valid_spiketimes, 
-                                      sync_cam, save_path, cluster_type, 
-                                      colors, exp, plot="hist", n_plot = [26,355])
+            ws = sac_amp_analysis(
+                saccades, pupil_center, valid_spiketimes, sync_cam, save_path, 
+                cluster_type, colors, exp, plot="hist_r2", dx = 0.01, n_plot = [26,355])
+            
+            #results["models"].append(models)
+            #results["r2s"].append(r2s)
+            results["ws"].append(ws)
             
         elif analysis == "sac_RT":
             tw, fr_sc, rts_sc, pref_sc = \
@@ -340,7 +352,6 @@ for exp in tqdm(experiments, desc="Files processed"):
             results["fr_sc"].append(fr_sc)
             results["PCA_var"].append([pca_results, exp_var_n])
         
-assert False
 
 ## All plots
 
@@ -375,7 +386,17 @@ else:
         #mean_emb_fr, mean_emb_c = hf.get_mean_fr_2d(z_fr_ps_slow, embedding, 
         #                                            emb_p, c_types)
         #hf.plot_fr_aligned(tw, mean_emb_fr, mean_emb_c)
-    
+    elif analysis == "sac_amp":
+        #r2s_all = np.concatenate([r2s for r2s in results["r2s"]], axis=0)
+        
+        #hf.plot_best_model(r2s_all, all_types_cat, colors)
+        
+        ws_all = np.concatenate([ws for ws in results["ws"]])
+        edges = np.arange(-1, 1 + 0.05, 0.05)
+        hf.plot_hist_typ(ws, cluster_type, colors, edges, save_path,
+                         exp, "sig lin", xlabel="w", cum=False)
+        
+        
     elif analysis == "sac_RT":
         rt_edges = np.arange(-0.2, 0.5, 0.02)
         # rts_sc pre,n,sign

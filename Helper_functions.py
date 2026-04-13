@@ -480,12 +480,10 @@ def get_sac_amp(spikes, sync_cam, saccades, pupil_x,
     sync_cam : np.array, shape (T)
     saccades :  np.array, shape (n_sac)
     pupil_x : np.array, shape (T)
-    Returns
-    -------
+    
+    Returns:
     delta_x : np.array, shape (n_sac)
     delta_fr : np.array, shape (N, n_sac)
-    
-
     """
     
     wini = np.array([t * camara_fs for t in win], dtype=int)
@@ -566,6 +564,70 @@ def get_mean_fr_center(fr, pupil_center, edges):
             mean_fr[:, b] = np.mean(fr[:, in_bin], axis=1)
     
     return mean_fr
+
+def lin_model_sac_sig(delta_x, delta_fr, p = 0.05, n_p=1000):
+    """
+    Evalutes a linear model with permutations.
+
+    Parameters:
+    delta_x : np.array, shape (n_sac)
+    delta_fr : np.array, shape (N, n_sac)
+
+    Returns:
+    ws : np.array, shape (N)
+
+    """
+    
+    def slope(x, y):
+        return np.polyfit(x, y, 1)[0]
+
+    ws = np.full(delta_fr.shape[0], np.nan)
+
+    for n, neu in enumerate(delta_fr):
+        w = slope(delta_x, neu)
+
+        perm_stats = np.empty(n_p)
+
+        for i in range(n_p):
+            shuffled_x = np.random.permutation(delta_x)
+            perm_stats[i] = slope(shuffled_x, neu)
+
+        p_val = np.mean(np.abs(perm_stats) >= np.abs(w))
+
+        if p_val < p:
+            ws[n] = w
+
+    return ws
+
+def lin_model_sac(delta_x, delta_fr, m_names):
+    """
+    Evalutes 3 models, [x,|x|,sign(x)].
+
+    Parameters:
+    delta_x : np.array, shape (n_sac)
+    delta_fr : np.array, shape (N, n_sac)
+
+    Returns:
+    models : dict, len(3)
+    r2s : np.array, shape (N, 3)
+
+    """
+    xs = [delta_x, np.abs(delta_x), np.sign(delta_x)]
+    models = dict.fromkeys(m_names, None)
+    r2s = np.zeros((delta_fr.shape[0], len(xs)))
+    ss_tot = np.sum((delta_fr - np.mean(delta_fr, axis=1, keepdims=True))**2,
+                    axis=1)
+    
+    for i, x in enumerate(xs):
+        coefs = np.array([np.polyfit(x, neu, 1) for neu in delta_fr])       
+        models[m_names[i]] = coefs
+        
+        dfr_pred = np.array([np.polyval(c, x) for c in coefs])
+        ss_res = np.sum((delta_fr - dfr_pred)**2, axis = 1)
+        
+        r2s[:,i] = 1 - ss_res / ss_tot
+
+    return models, r2s
 
 def get_correlation(z_fr, bt):
     """Gets the correlation between the firing rate matrix z_fr and the 
@@ -1480,6 +1542,39 @@ def plot_raster(spikes_all, sync_cam, align_indx, fr_colors, spk_colors,
             plt.savefig(os.path.join(sp, str(n) + "_" + cluster_type[n] + 
                                      "_" + name))
             plt.close(fig)
+
+def plot_best_model(r2s, cluster_type, colors, m_names=["x","|x|","sign(x)"]):
+    
+    cluster_type = np.asanyarray(cluster_type)
+    best_model = np.argmax(r2s, axis=1)
+
+    unique_clusters = colors.keys()
+    unique_models = np.arange(3)
+
+    width = 0.2
+    offsets = np.linspace(-width, width, len(unique_clusters))
+    
+    plt.figure(figsize=(8, 5))
+    
+    for i, c in enumerate(unique_clusters):
+
+        mask = cluster_type == c
+        per = [100 * np.sum(best_model[mask] == m)/ np.sum(mask) 
+                  for m in unique_models]
+        
+        x_pos = unique_models + offsets[i]
+        
+        plt.bar(x_pos, per, width=width, 
+                color=colors[c], label=c)
+    
+    plt.xticks(unique_models, labels=m_names)
+    plt.xlabel("Best Model")
+    plt.ylabel("% units")
+    plt.legend()
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    
+    plt.show()
 
 def plot_nratio_code(code, cluster_type, colors, tw, sp, name):
     
