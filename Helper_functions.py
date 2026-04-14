@@ -565,12 +565,12 @@ def get_mean_fr_center(fr, pupil_center, edges):
     
     return mean_fr
 
-def lin_model_sac_sig(delta_x, delta_fr, p = 0.05, n_p=1000):
+def lin_model_sac_sig(x_true, delta_fr, p = 0.05, n_p=1000):
     """
     Evalutes a linear model with permutations.
 
     Parameters:
-    delta_x : np.array, shape (n_sac)
+    x_true : np.array, shape (n_sac)
     delta_fr : np.array, shape (N, n_sac)
 
     Returns:
@@ -581,27 +581,28 @@ def lin_model_sac_sig(delta_x, delta_fr, p = 0.05, n_p=1000):
     def slope(x, y):
         return np.polyfit(x, y, 1)[0]
 
-    ws = np.full(delta_fr.shape[0], np.nan)
+    ws = np.zeros((delta_fr.shape[0]))
 
     for n, neu in enumerate(delta_fr):
-        w = slope(delta_x, neu)
+        w = slope(x_true, neu)
 
         perm_stats = np.empty(n_p)
 
         for i in range(n_p):
-            shuffled_x = np.random.permutation(delta_x)
+            shuffled_x = np.random.permutation(x_true)
             perm_stats[i] = slope(shuffled_x, neu)
 
         p_val = np.mean(np.abs(perm_stats) >= np.abs(w))
 
         if p_val < p:
-            ws[n] = w
+            ws[n] = 1
 
     return ws
 
 def lin_model_sac(delta_x, delta_fr, m_names):
     """
-    Evalutes 3 models, [x,|x|,sign(x)].
+    Evalutes 3 models, [x,|x|,sign(x)] and returns the coefficients and the
+    significant weights.
 
     Parameters:
     delta_x : np.array, shape (n_sac)
@@ -609,25 +610,27 @@ def lin_model_sac(delta_x, delta_fr, m_names):
 
     Returns:
     models : dict, len(3)
-    r2s : np.array, shape (N, 3)
+    sig_ws : np.array, shape (N, 3)
 
     """
     xs = [delta_x, np.abs(delta_x), np.sign(delta_x)]
     models = dict.fromkeys(m_names, None)
-    r2s = np.zeros((delta_fr.shape[0], len(xs)))
-    ss_tot = np.sum((delta_fr - np.mean(delta_fr, axis=1, keepdims=True))**2,
-                    axis=1)
+    sig_ws = np.zeros((delta_fr.shape[0], len(xs)))
+    
     
     for i, x in enumerate(xs):
         coefs = np.array([np.polyfit(x, neu, 1) for neu in delta_fr])       
         models[m_names[i]] = coefs
         
-        dfr_pred = np.array([np.polyval(c, x) for c in coefs])
-        ss_res = np.sum((delta_fr - dfr_pred)**2, axis = 1)
+        sig_ws[:, i] = lin_model_sac_sig(x, delta_fr)
         
-        r2s[:,i] = 1 - ss_res / ss_tot
+        #ss_tot = np.sum((delta_fr - np.mean(delta_fr, axis=1, keepdims=True))**2,
+        #                axis=1)
+        # dfr_pred = np.array([np.polyval(c, x) for c in coefs])
+        # ss_res = np.sum((delta_fr - dfr_pred)**2, axis = 1)
+        # r2s[:,i] = 1 - ss_res / ss_tot
 
-    return models, r2s
+    return models, sig_ws
 
 def get_correlation(z_fr, bt):
     """Gets the correlation between the firing rate matrix z_fr and the 
@@ -1543,13 +1546,13 @@ def plot_raster(spikes_all, sync_cam, align_indx, fr_colors, spk_colors,
                                      "_" + name))
             plt.close(fig)
 
-def plot_best_model(r2s, cluster_type, colors, m_names=["x","|x|","sign(x)"]):
+def plot_sig_ws(sig_ws, cluster_type, colors, sp, name, 
+                m_names=["x","|x|","sign(x)"]):
     
     cluster_type = np.asanyarray(cluster_type)
-    best_model = np.argmax(r2s, axis=1)
 
     unique_clusters = colors.keys()
-    unique_models = np.arange(3)
+    unique_models = np.arange(len(m_names))
 
     width = 0.2
     offsets = np.linspace(-width, width, len(unique_clusters))
@@ -1559,8 +1562,8 @@ def plot_best_model(r2s, cluster_type, colors, m_names=["x","|x|","sign(x)"]):
     for i, c in enumerate(unique_clusters):
 
         mask = cluster_type == c
-        per = [100 * np.sum(best_model[mask] == m)/ np.sum(mask) 
-                  for m in unique_models]
+        per = [100 * np.sum(sig_ws[mask, m])/ np.sum(mask) 
+               for m in unique_models]
         
         x_pos = unique_models + offsets[i]
         
@@ -1568,12 +1571,12 @@ def plot_best_model(r2s, cluster_type, colors, m_names=["x","|x|","sign(x)"]):
                 color=colors[c], label=c)
     
     plt.xticks(unique_models, labels=m_names)
-    plt.xlabel("Best Model")
     plt.ylabel("% units")
     plt.legend()
     for s in ['right', 'top']:
         plt.gca().spines[s].set_visible(False)
     
+    plt.savefig(os.path.join(sp,"plots", name + "_sig_ws.svg"))
     plt.show()
 
 def plot_nratio_code(code, cluster_type, colors, tw, sp, name):
