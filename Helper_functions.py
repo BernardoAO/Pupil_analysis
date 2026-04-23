@@ -1465,6 +1465,47 @@ def plot_sac_amp_ex(delta_x, delta_fr, sca_fr, n_plot, cluster_type, colors,
         plt.savefig(os.path.join(sp,"plots", exp + "_" + str(n) +".svg"))
         plt.show()
 
+def plot_sac_amp_diagram(delta_x, sp, xlim = [-30,30], sig=1):
+    
+    m_names = ["x", "abs_x", "sign_x", "resp", "non resp"]
+    x = np.arange(xlim[0], xlim[1], 0.01)
+    
+    # X
+    for model in m_names:
+        
+        if model == "x":
+            y_s = delta_x + sig * np.random.randn(delta_x.shape[0])
+            y = x
+        elif model == "abs_x":
+            y_s = np.abs(delta_x) + sig * np.random.randn(delta_x.shape[0])
+            y = np.abs(x)
+        elif model == "sign_x":
+            y_s = 10 * np.sign(delta_x) + sig * np.random.randn(delta_x.shape[0])
+            y = 10 * np.sign(x)
+        elif model == "resp":
+            y_s = 10 + sig * np.random.randn(delta_x.shape[0])
+            y = 10 * np.ones_like(x)
+        elif model == "non resp":
+            y_s = sig * np.random.randn(delta_x.shape[0])
+            y = np.zeros_like(x)
+            
+        plt.scatter(delta_x, y_s)
+        plt.plot(x, y, color="blue")
+        
+        plt.xlabel("Δx")
+        plt.ylabel("Δfr")
+        
+        for ax in ['left', 'bottom']:
+            plt.gca().spines[ax].set_position('zero')
+    
+        for ax in ['right', 'top']:
+            plt.gca().spines[ax].set_color('none')
+        
+        plt.gca().xaxis.set_label_position('top')
+        plt.gca().yaxis.set_label_position('right')
+        plt.savefig(os.path.join(sp,"plots", model + "_diagram.svg"))
+        plt.show()
+
 def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp, 
                 ylim=[-1,3]):
 
@@ -1646,59 +1687,130 @@ def plot_event(events, b, sac_colors, name, exp, sp, win = [-0.25, 0.25], camara
     plt.show()
     
 def plot_pca(tw, pca_results, colors, pr_colors, sp,
-             multi_d=False, name="PCA_sc.svg", nc=3):
+             name="PCA_sc.svg", nc=3):
+    
     types = colors.keys()
-    if not multi_d:
-        for ti, typ in enumerate(types):       
+    
+    for ti, typ in enumerate(types):       
+        
+        fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
+        for c in range(nc): 
+            proj = pca_results[typ]["projection"]
             
-            fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
-            for c in range(nc): 
-                proj = pca_results[typ]["projection"]
+            axes[c].plot(tw, proj[c,:,0], color=pr_colors[0])
+            axes[c].plot(tw, proj[c,:,1], color=pr_colors[1])
+            
+            ylim = axes[c].get_ylim()
+            axes[c].vlines(0, ylim[0], ylim[1], 
+                            colors="k", linestyles="--", alpha=0.3)
+            axes[c].set_xlim([tw[0],tw[-1]])
+            
+            axes[c].tick_params(axis='y', labelcolor=colors[typ])
+            axes[c].set_ylabel("PC" + str(c+1), color=colors[typ])
+            if c < nc - 1:
+                axes[c].set_xticks([])
+            else:
+                axes[c].set_xlabel("time [s]", color=colors[typ])
+                axes[c].tick_params(axis='x', labelcolor=colors[typ])
                 
-                axes[c].plot(tw, proj[c,:,0], color=pr_colors[0])
-                axes[c].plot(tw, proj[c,:,1], color=pr_colors[1])
+            for s in ['right', 'top']:
+                axes[c].spines[s].set_visible(False)
+            for s in ['left', 'bottom']:
+                axes[c].spines[s].set_color(colors[typ])
                 
-                ylim = axes[c].get_ylim()
-                axes[c].vlines(0, ylim[0], ylim[1], 
-                                colors="k", linestyles="--", alpha=0.3)
-                axes[c].set_xlim([tw[0],tw[-1]])
-                
-                axes[c].tick_params(axis='y', labelcolor=colors[typ])
-                axes[c].set_ylabel("PC" + str(c+1), color=colors[typ])
-                if c < nc - 1:
-                    axes[c].set_xticks([])
-                else:
-                    axes[c].set_xlabel("time [s]", color=colors[typ])
-                    axes[c].tick_params(axis='x', labelcolor=colors[typ])
-                    
-                for s in ['right', 'top']:
-                    axes[c].spines[s].set_visible(False)
-                for s in ['left', 'bottom']:
-                    axes[c].spines[s].set_color(colors[typ])
-                    
-            plt.tight_layout()
-            plt.savefig(os.path.join(sp,"plots", typ + name))
-
-            plt.show()
-    else:
-        fig, axes = plt.subplots(1, len(types), figsize=(12, 8), 
-                                 subplot_kw={'projection': '3d'})
-        for ti, typ in enumerate(types):
-            axes[ti].plot3D(pca_pc[ti,0,:,0], pca_pc[ti,1,:,0], pca_pc[ti,2,:,0],
-                        color=colors[typ])
-            axes[ti].plot3D(pca_pc[ti,0,:,1], pca_pc[ti,1,:,1], pca_pc[ti,2,:,1],
-                        color=colors[typ], linestyle="dashed")
-            
-            axes[ti].set_xlabel("PC1")
-            axes[ti].set_ylabel("PC2")
-            axes[ti].set_zlabel("PC3")
-            
-            axes[ti].set_xticks([])
-            axes[ti].set_yticks([])
-            axes[ti].set_zticks([])
-            
         plt.tight_layout()
+        plt.savefig(os.path.join(sp,"plots", typ + name))
+
         plt.show()
+
+def plot_multi_pca(tw, pca_results, colors, pr_colors, sp,
+             name="PCA3d_sc.svg", nc=3):
+    
+    va = np.array([[90,20,45],
+                   [270,45,45]])
+    i_0 = np.argwhere(tw==0)[0][0]
+    
+    types = colors.keys()
+    
+    fig, axes = plt.subplots(len(types), 1, figsize=(8, 14), 
+                             subplot_kw={'projection': '3d'})
+    
+    for ti, typ in enumerate(types):
+        proj = pca_results[typ]["projection"]
+        
+        for s in range(2):
+            axes[ti].plot3D(proj[0,:,s], proj[1,:,s], proj[2,:,s],
+                        color=pr_colors[s])
+        
+        
+            axes[ti].scatter(proj[0, i_0, s],proj[1, i_0, s], proj[2, i_0, s],
+                             color=pr_colors[s],edgecolor="red",marker="^")
+        
+        axes[ti].set_xlabel("PC1", color=colors[typ])
+        axes[ti].set_ylabel("PC2", color=colors[typ])
+        axes[ti].set_zlabel("PC3", color=colors[typ])
+        
+        axes[ti].set_xticks([])
+        axes[ti].set_yticks([])
+        axes[ti].set_zticks([])
+        
+        axes[ti].xaxis.line.set_color(colors[typ])
+        axes[ti].yaxis.line.set_color(colors[typ])
+        axes[ti].zaxis.line.set_color(colors[typ])
+        
+        axes[ti].view_init(elev=va[0,ti], azim=va[1,ti])
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(sp,"plots", typ + name))
+    plt.show()
+
+def plot_cs_pc_w(pca_results, ws, cluster_types, name, sp, nc = 3):
+    
+    type_names = pca_results.keys()
+    cluster_types = np.array(cluster_types)
+    sim_mat = np.zeros((len(type_names), nc))
+    
+    for i, types in enumerate(type_names):
+        ws_type = ws[cluster_types == types]
+        
+        for c in range(nc):
+            pca_ws = pca_results[types]["w"][c,:]
+            
+            sim = np.dot(pca_ws, ws_type) / (
+                np.linalg.norm(pca_ws) * np.linalg.norm(ws_type))
+            sim_mat[i, c] = np.abs(sim)
+    
+    plt.imshow(sim_mat, cmap="hot")
+    plt.yticks(range(len(type_names)), type_names)
+    plt.xticks(range(nc), ["PC" + str(c) for c in range(1,nc+1)])
+    plt.clim([0,1])
+    plt.colorbar(label="|Cos.sim.|")
+    plt.title(name)
+    plt.savefig(os.path.join(sp, "plots", name + "_PC_CosSim.svg"))
+    plt.show()
+
+def plot_cs_ws(w1s, w2s, cluster_types, colors, name, sp):
+    
+    type_names = colors.keys()
+    cluster_types = np.array(cluster_types)
+    sim_mat = np.zeros((len(type_names), 1))
+    
+    for i, types in enumerate(type_names):
+        w1s_type = w1s[cluster_types == types]
+        w2s_type = w2s[cluster_types == types]
+
+        sim = np.dot(w1s_type, w2s_type) / (
+            np.linalg.norm(w1s_type) * np.linalg.norm(w2s_type))
+        sim_mat[i] = np.abs(sim)
+    
+    plt.imshow(sim_mat, cmap="hot")
+    plt.yticks(range(len(type_names)), type_names)
+    plt.xticks([0], [name])
+    plt.clim([0,1])
+    plt.colorbar(label="|Cos.sim.|")
+    plt.title(name)
+    plt.savefig(os.path.join(sp, "plots", name + "_CosSim.svg"))
+    plt.show()
 
 def plot_pca_var(pca_results, exp_var_n, colors, sp, name, sig_nc=[]):
     types = colors.keys()
@@ -1874,4 +1986,19 @@ def plot_coding(n_plot, tw, coding, cluster_type, connected_pairs,
             axes[ni].set_xlabel("time [s]")
         else:
             axes[ni].set_xticklabels([])
+    plt.show()
+
+def plot_proj(tw, proj, delta_x, sac_colors):
+    #(t,e)
+    for s in range(proj.shape[1]):
+        sign = int((np.sign(delta_x[s]) + 1) / 2)
+        strenght = np.abs(delta_x[s]) / np.max(np.abs(delta_x))
+        plt.plot(tw, proj[:,s], color=sac_colors[sign], alpha=strenght)
+    plt.xlabel(" time [s]")
+    plt.ylabel("proj. fr")
+
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    #plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
+
     plt.show()
