@@ -1,4 +1,4 @@
-## Pupila movement analysis
+## Pupil movement analysis
 ### Bernardo AO
 import numpy as np
 import os
@@ -7,8 +7,9 @@ import pickle
 import scipy.signal as signal
 import Helper_functions as hf
 
-data_path = r"D:\NP data\Bernardo_awake_cx\DLC\left_eye\labeled_videos"
+data_path = r"D:\NP data\Bernardo_awake_cx\DLC\labeled_videos"
 save_path = r"D:\NP data\Bernardo_awake_cx\Results"
+side = "right_eye"
 
 n_pupil = 8
 n_eyelid = 4
@@ -21,15 +22,17 @@ exception_files_tv = ["cam2_2023-04-17-13-31-32", "cam2_2023-04-13-12-42-47"]
 os.chdir(data_path)
 all_exp = [d for d in os.listdir()]
 
-work_exp = ['2023-04-13_12-35-02']
+work_exp = ['2022-12-20_15-08-10', '2022-12-21_13-09-10',
+            '2023-03-15_11-05-00','2023-03-15_15-23-14','2023-03-16_12-16-07']
 
 for exp in work_exp:
     
     # Import or create pupil_data
-    os.chdir(exp)    
+    os.chdir(exp)
+    os.chdir(side)
     sessions_files = [f for f in os.listdir() if f[-11:] == "full.pickle"]
     
-    pupil_data_path, pupil_data = hf.create_pupil_data(exp, save_path, 
+    pupil_data_path, pupil_data = hf.create_pupil_data(exp, save_path, side,
                                      sessions_files, output_variables)
     
     for file in sessions_files:
@@ -81,7 +84,7 @@ for exp in work_exp:
                                            pupil_size_clean * eye_lenght)
         
         ## Get saccades
-        saccade_indx = hf.import_saccades(session, exp)
+        saccade_indx = hf.import_saccades(session, side)
         
         # Plot
         hf.plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
@@ -98,7 +101,7 @@ for exp in work_exp:
     
 
     pupil_data.to_pickle(pupil_data_path)
-    os.chdir("..")
+    os.chdir(data_path)
 
 
 

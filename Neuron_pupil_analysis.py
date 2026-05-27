@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tqdm import tqdm
 import Helper_functions as hf
-#assert False
+assert False
 
 # TODO saccades per stimuli
 
@@ -71,6 +71,11 @@ def sac_amp_analysis(saccades, pupil_center, valid_spiketimes, sync_cam,
     
     models, sig_ws = hf.lin_model_sac(delta_x, delta_fr, m_names)
         
+    if plot == "m_w":
+        m = np.mean(delta_fr,axis=1)
+        w = models[m_names[0]][:,0]
+        hf.plot_type_scatter(m, w, colors, cluster_type, save_path, exp)
+        
     if plot == "hist": 
         edges = np.arange(-1, 1+dx, dx)
         for m_name, m  in models.items():
@@ -128,7 +133,7 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
     
     if plot == "raster":
-        plts_sp = os.path.join(save_path, "plots", "Neurons", "sac", exp)
+        plts_sp = os.path.join(save_path, "plots", "Neurons", "mov_bar", exp)
         hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, sac_colors, 
                        msc_colors, tw, fr_sc, c_types, cluster_type, 
                        sp = plts_sp, name="sac.png")
@@ -136,8 +141,8 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     if an_type == "RT":
 
         # Response times
-        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], p=0.01)
-        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], p=0.01)
+        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], p=0.01, permute=False)
+        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], p=0.01, permute=False)
         
         # Preferred direction
         max_fr = np.max(fr_sc, axis=1)
@@ -152,12 +157,25 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
                            msc_colors, tw, fr_sc, c_types, cluster_type, 
                            rts=[rts_sc_t, rts_sc_n], sp = plts_sp, 
                            name = exp + "_sac.png")
+        
+        elif plot == "hist":
+            rt_edges = np.arange(-0.2, 0.5, 0.02)
+            hf.plot_sc_hist(rts_sc, c_types, rt_edges, save_path, exp)
+            
         return tw, fr_sc, rts_sc, pref_sc
     
     elif an_type == "MI":
         
         s = np.array([0 if s == sac_colors[0] else 1 for s in msc_colors])
-        mutual_info = hf.get_MI(trial_fr, s)
+        mutual_info_raw = hf.get_MI(trial_fr, s)
+        
+
+        
+        mutual_info = hf.get_sig_MI(mutual_info_raw, tw)
+        
+        if plot == "MI":
+            hf.plot_mean_mi(tw, mutual_info, cluster_type, colors, save_path, exp)
+
         
         return tw, mutual_info
         
@@ -179,16 +197,17 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
     elif an_type == "PCA":
         pca_results = hf.neuron_PCA(fr_sc, cluster_type, n_components=nc)
         exp_var_n = hf.noise_PCA(fr_sc, trial_fr, cluster_type, n_components=nc)
-        if plot == "pca":
-            hf.plot_pca(tw, pca_results, colors, save_path)
-            hf.plot_pca_var(pca_results, exp_var_n, colors, save_path, exp)
         
+        if plot == "pca":
+            hf.plot_pca(tw, pca_results, colors, sac_colors, save_path, exp)
+            hf.plot_pca_var(pca_results, exp_var_n, colors, save_path, exp)
+                
         return tw, fr_sc, pca_results, exp_var_n
 
 #def main():
     
 # data file names
-pupil_data_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data"
+pupil_data_path = r"D:\NP data\Bernardo_awake_cx\Results\pupil_data\right_eye"
 spike_bundle_path = r"D:\NP data\analysis\data-single-unit"
 save_path = r"D:\NP data\Bernardo_awake_cx\Results"
 
@@ -199,18 +218,18 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "darkorange"]
 
 # Parameters 
-analysis = "sac_MI" # exp, exp_neu, ps_pc_corr,
+analysis = "sac_amp" # exp, exp_neu, ps_pc_corr,
                      # ps_corr, pc_corr, ps_ev, pc_sim, 
-                     # sac_RT, sac_MI, sac_dir, sac_PCA
+                     # sac_amp; sac_RT, sac_MI, sac_dir, sac_PCA
 period =  "all" # "chirp"
 
-fr_win_name = "_100ms_causal.npy"
+fr_win_name = "_100ms_causal.npy" #40c, 100c
 fr_win = [-0.1, 0] #[-0.05, 0.05] #
 
 ps_corr_edges = np.arange(-0.3, 0.32, 0.01)
 pc_corr_edges = np.arange(0., 0.2, 0.005)
 
-save_rts = True
+save_rts = False
 
 units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
                     # [30,70,355] #sac 
@@ -220,7 +239,8 @@ pre_load = False if units_for_plot else True
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = ["2022-12-20_15-08-10"]#,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
+experiments = ['2022-12-20_15-08-10']
+# ["2022-12-20_15-08-10"] #,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
 
 results = defaultdict(list)
 
@@ -232,11 +252,13 @@ for exp in tqdm(experiments, desc="Files processed"):
     # spike data
     Spke_Bundle, spiketimes, SIN_data, connected_pairs_all = \
         hf.import_spike_data(exp, spike_bundle_path)
-    vis_stim, stim_colors = hf.get_stims(Spke_Bundle)
-
+        
     # merge pupil data for the exp
     sync_cam, pupil_size, pupil_center, saccades = \
         hf.import_pupil_data(pupil_data_path, Spke_Bundle, exp, period)
+    
+    # stimulus
+    vis_stim, stim_colors, mov_bar = hf.get_stims(Spke_Bundle)
 
     if analysis == "exp":
         # Stimuli
@@ -313,18 +335,34 @@ for exp in tqdm(experiments, desc="Files processed"):
             delta_fr, models, sig_ws = sac_amp_analysis(
                 saccades, pupil_center, valid_spiketimes, sync_cam, firing_rate,
                 save_path, cluster_type, colors, exp, 
-                plot="diagram", dx = 0.01, n_plot = [26,355])
+                plot="m_w", dx = 0.01, n_plot = [26,355])
             
             results["delta_fr"].append(delta_fr)
             results["models"].append(models)
             results["sig_ws"].append(sig_ws)
+            
+            sac_mb = False
+            if sac_mb:
+                w_sac = models["|x|"][:,0]
+                m_sac = np.mean(delta_fr, axis=1)
+                
+                delta_x, delta_fr = hf.get_delta_fr(valid_spiketimes, sync_cam, mov_bar)
+                m_mb = np.mean(delta_fr, axis=1)
+
+                m_names=["x", "|x|", "sign(x)"]
+                models, sig_ws = hf.lin_model_sac(delta_x, delta_fr, m_names, sig=False)
+                w_mb = models["|x|"][:,0]
+                
+                hf.plot_type_scatter(w_mb, w_sac, colors, cluster_type, save_path, 
+                                     exp + "all_mb_sac", corr=True, xlabel="w_mb",ylabel="w_sac")
+        
             
         elif analysis == "sac_RT":
             tw, fr_sc, rts_sc, pref_sc = \
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
                                  save_path, cluster_type, colors, exp,
-                                 an_type="RT", plot="none")
+                                 an_type="RT", plot="hist")
                 
             results["fr_sc"].append(fr_sc)
             results["rts_sc"].append(rts_sc) 
@@ -338,19 +376,21 @@ for exp in tqdm(experiments, desc="Files processed"):
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
                                  save_path, cluster_type, colors, exp,
-                                 an_type="MI", plot="none")
+                                 an_type="MI", plot="MI", win = [-0.5,1])
+                
+            results["mutual_info"].append(mutual_info) 
             
             if save_rts:
                 rts_sc = np.load(os.path.join(save_path, "rts", exp+ ".npy"))
                 results["rts_sc"].append(rts_sc) 
-            results["mutual_info"].append(mutual_info) 
+            
                     
         elif analysis == "sac_dir":                
             tw, fr_sc, sac_dir = \
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
                                  save_path, cluster_type, colors, exp,
-                                 an_type="dir", plot="raster_dir")
+                                 an_type="dir", plot="nratio")
             results["fr_sc"].append(fr_sc)
             results["sac_dir"].append(sac_dir) 
         
@@ -363,6 +403,9 @@ for exp in tqdm(experiments, desc="Files processed"):
             results["fr_sc"].append(fr_sc)
             results["PCA_var"].append([pca_results, exp_var_n])
         
+
+
+
 ## All plots
 
 if analysis == "ps_pc_corr":
@@ -397,14 +440,24 @@ else:
         hf.plot_umap(embedding, c_types_all, save_path) # emb_p, mean_emb_c
         
     elif analysis == "sac_amp":
-        
         delta_fr_all = np.concatenate(
             [np.mean(df, axis=1) for df in results["delta_fr"]])
-        lin_ws_all = np.concatenate([m["x"][:,0] for m in results["models"]])
+        lin_ws_all = np.concatenate(
+            [m["x"][:,0] for m in results["models"]])
         sig_ws_all = np.concatenate(
             [sig_ws for sig_ws in results["sig_ws"]], axis=0)
         
-        hf.plot_sig_ws(sig_ws_all, all_types_cat, colors, save_path, "all")       
+        hf.plot_sig_ws(sig_ws_all, all_types_cat, colors, save_path, "all")
+        hf.plot_type_scatter(delta_fr_all, lin_ws_all, colors, all_types_cat, save_path)
+        
+        edges_m = np.arange(-10,50,0.5)
+        hf.plot_hist_typ(delta_fr_all, all_types_cat, colors, edges_m, 
+                          save_path, "all", "delta_fr", cum=False, xlabel="Δfr")
+        
+        edges_w = np.arange(-1.5,1.5,0.05)
+        hf.plot_hist_typ(lin_ws_all, all_types_cat, colors, edges_w, 
+                          save_path, "all", "w", cum=False, xlabel="w")
+
         
     elif analysis == "sac_RT":
         rt_edges = np.arange(-0.2, 0.5, 0.02)
@@ -416,11 +469,15 @@ else:
     elif analysis == "sac_MI":
         
         # RT mask
-        rts_sc_all = np.concatenate([rts for rts in results["rts_sc"]], axis=1)
-        rt_mask = ~np.isnan(rts_sc_all[0,:,0]) | ~np.isnan(rts_sc_all[1,:,0])
+        #rts_sc_all = np.concatenate([rts for rts in results["rts_sc"]], axis=1)
+        #rt_mask = ~np.isnan(rts_sc_all[0,:,0]) | ~np.isnan(rts_sc_all[1,:,0])
         
         mutual_info_all = np.concatenate([
             mi for mi in results["mutual_info"]], axis = 0)
+        #mutual_info_all = np.concatenate([mi for i, mi in enumerate(results["mutual_info"]) if i != 2], axis=0)
+        #  all_types_cat = [x for i, exp in enumerate(results["types"]) if i != 2 for x in exp]
+        hf.plot_mean_mi(tw, mutual_info_all, all_types_cat, colors, save_path, "all_3")
+
     
     elif analysis == "sac_dir":
         all_sac_dir = np.concatenate(results["sac_dir"], axis = 0)
@@ -430,9 +487,11 @@ else:
     elif analysis == "sac_PCA":
         # projection
         all_fr_sc_cat = np.concatenate(results["fr_sc"], axis = 0)
+        
         pca_results = hf.neuron_PCA(all_fr_sc_cat, all_types_cat)
         
-        analysis2 = "sac_amp"
+        
+        analysis2 = "" #sac_amp"
         if analysis2 == "conn":
             hf.plot_weights_conn(connected_pairs, pca_results, cluster_type,
                                  save_path, exp, nc=[1,1], pre_post=["TCA","NW"])
@@ -444,6 +503,12 @@ else:
                           "resp vec", save_path)
             hf.plot_cs_ws(lin_ws_all, delta_fr_all, all_types_cat, colors,
                           "amp resp", save_path)
+            
+        elif analysis2 == "all":
+            pca_results_all = hf.all_PCA(all_fr_sc_cat)
+            hf.plot_type_scatter(pca_results_all["w"][0,:], pca_results_all["w"][1,:], 
+                        colors, all_types_cat, save_path, name="PCA_wall")
+
             
         else:
             hf.plot_pca(tw, pca_results, colors, sac_colors, save_path)
@@ -458,44 +523,15 @@ else:
                             colors, save_path, "all", sig_nc)
             
             # weights
-            hf.plot_weights(pca_results, colors, save_path)    
+            hf.plot_weights(pca_results, colors, save_path, scatter=True)
+            
         
-    
-
-
-
-indices = [8,41,48,87,74,229,230,273,385,407,355]
-mask = np.zeros(len(rt_mask), dtype=bool)
-mask[indices] = True
-    
-def plot_mean_mi(tw, mutual_info, mask, cluster_type, colors):
-    
-    cluster_type = np.asanyarray(cluster_type)
-    unique_type = np.unique(cluster_type)
-    
-
-    for neu_type in unique_type:
         
-        if mask.ndim == 1:
-            mask_com = (cluster_type == neu_type) & mask
-            mean_mi = np.mean(mutual_info[mask_com,:], axis=0) 
-        
-        plt.plot(tw, mean_mi, color=colors[neu_type], label=neu_type)
-    
-    plt.legend()
-    plt.xlabel("time [s]")
-    plt.xlim([tw[0],tw[-1]])
 
-    for s in ['right', 'top']:
-        plt.gca().spines[s].set_visible(False)
+"""
 
-    plt.ylabel("Information [bits]")
-    ylim = plt.gca().get_ylim()
-    plt.vlines(0,ylim[0],ylim[1],colors="grey", linestyle="dashed")
-    plt.ylim(ylim)
-    
-    #plt.savefig(os.path.join(sp,"plots", neu_type + "_rt_hist.svg"))
-    plt.show()
+indices = [355]#[8,41,48,87,74,229,230,273,385,407,355]
+
 
 def filter_mutual_info(mi, win_m = 3, thresh = 0.1,  f_type="median"):
     filtered_mi = np.zeros_like(mi)
@@ -515,11 +551,6 @@ def filter_mutual_info(mi, win_m = 3, thresh = 0.1,  f_type="median"):
         
     return filtered_mi
 
-filtered_mi = filter_mutual_info(mutual_info_all, f_type="thresh")
-plot_mean_mi(tw, filtered_mi, mask, all_types_cat, colors)
-
-
-"""
 def find_double_coders(tw, sac_dir, tww = [-0.4,0.4]):
     double_n = []
     for n in range(sac_dir.shape[0]):
@@ -567,6 +598,22 @@ all_pref_sc = np.concatenate(results["pref_sc"], axis = 0)
 all_rts_sc = np.concatenate(results["rts_sc"], axis = 0)
 plot_pref_sc_conn(connected_pairs, all_pref_sc, all_rts_sc, cluster_type,
                   save_path, exp, pre_post=["TCA","NW"])
+
+def check_mb_sac(saccades,mov_bar,sync_cam, sac_colors):
+    y = 1
+    for si,s in enumerate(saccades):
+        sac = np.array(saccades[s])
+        sac_times = (sync_cam[sac] - sync_cam[0]) / 60
+        plt.vlines(sac_times, y + 0.05 + si*0.05, y + 0.1 + si*0.05, 
+                   colors=sac_colors[si], linewidth=0.5)
+    y = 1.3 
+    for si,s in enumerate(mov_bar):
+        sac = np.array(mov_bar[s])
+        sac_times = (sync_cam[sac] - sync_cam[0]) / 60
+        plt.vlines(sac_times, y + 0.05 + si*0.05, y + 0.1 + si*0.05, 
+                   colors=sac_colors[si], linewidth=0.5)
+    plt.show()
+
 """
 
 

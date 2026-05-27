@@ -20,14 +20,17 @@ from matplotlib import colors as pltcolors
 
 from joblib import Parallel, delayed
 
-def create_pupil_data(exp, save_path, sessions_files, output_variables):
+def create_pupil_data(exp, save_path, side, sessions_files, output_variables,
+                      pre_load = False):
     """
     Creates a pd array or reads it in case it already exists.
     """
-    pupil_data_path = os.path.join(save_path, "pupil_data",
+    pupil_data_path = os.path.join(save_path, "pupil_data", side,
                                    "pupil_data_" + exp + ".pkl")
-    if os.path.isfile(pupil_data_path) and False:
+    
+    if os.path.isfile(pupil_data_path) and pre_load:
         pupil_data = pd.read_pickle(pupil_data_path)
+        
     else:
         pupil_data_dic = {"session": [file[5:24] for file in sessions_files],
                           "awake": [1 for file in sessions_files]}
@@ -163,7 +166,7 @@ def get_pupil_center(ROIs_smooth, pupil_size, centered=False):
     else:
         return pupil_center
 
-def import_saccades(session, filename="saccades.txt"):
+def import_saccades(session, side, filename="saccades.txt"):
     """
     Parameters:
     - session : str
@@ -175,7 +178,8 @@ def import_saccades(session, filename="saccades.txt"):
 
     data = {"temporal": None, "nasal": None}
     current_section = None
-    filename="saccades.txt"
+
+    os.chdir("..")
 
     with open(filename, "r") as f:
         for line in f:
@@ -202,6 +206,7 @@ def import_saccades(session, filename="saccades.txt"):
                     # The rest are integers (saccade times)
                     values = [int(x) for x in parts[1:]]
                     data[current_section] = values
+    os.chdir(side)
 
     return data
 
@@ -211,10 +216,12 @@ def get_stims(Spke_Bundle):
 
     Parameters:
     - Spke_Bundle : dict
+    - sync_cam : list
     
     Returns:
     - vis_stim : list
     - colors : list
+    - mov_bar : dict {"temporal":list,"nasal":list}
 
     """
     vis_stim_all = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
@@ -228,8 +235,24 @@ def get_stims(Spke_Bundle):
         if s in Spke_Bundle["events"]:
             vis_stim.append(s)
             colors.append(cmap(i))
+    
+    # Moving bar
+    
+    mov_bar = dict.fromkeys(["temporal","nasal"], np.array([], dtype=np.int64))
+    mb = Spke_Bundle["events"]["mb"]
+    mb_or = Spke_Bundle["stim_params_files"]["mb"]["stimulus"]["sequence"]["orientations"]
+    sync_cam = Spke_Bundle["Synchronization_TTLs"]["Sync_cam"]
+    
+    for b, bar in enumerate(mb):
+        if mb_or[b] in [0.,30.,330.]:
+            indx = np.abs(sync_cam - bar).argmin()
+            mov_bar["temporal"] = np.append(mov_bar["temporal"], indx)
             
-    return vis_stim, colors
+        elif mb_or[b] in [180.,210.,150.]:
+            indx = np.abs(sync_cam - bar).argmin()
+            mov_bar["nasal"] = np.append(mov_bar["nasal"], indx)
+    
+    return vis_stim, colors, mov_bar
 
 def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1, 
                min_a = 0.05, camara_fs = 200):
@@ -502,6 +525,42 @@ def get_sac_amp(spikes, sync_cam, saccades, pupil_x,
 
     return delta_x, delta_fr
 
+def get_delta_fr(spikes, sync_cam, mov_bar,
+                win_b=[-0.2,0],win_r=[0.5,1], camara_fs=200):
+    """
+    Calculates the difference of pupil x and firing rate for the saccades. 
+
+    Parameters:
+    spikes : list lenght(N)
+    sync_cam : np.array, shape (T)
+    mov_bar :  dict
+    pupil_x : np.array, shape (T)
+    
+    Returns:
+    delta_x : np.array, shape (n_sac)
+    delta_fr : np.array, shape (N, n_sac)
+    """
+        
+    mov_bar_all = np.concatenate((mov_bar["temporal"], 
+                                mov_bar["nasal"]), axis=0)
+    delta_x = [1 if sc < len(mov_bar["temporal"]) else 
+               -1 for sc in range(len(mov_bar_all))]
+    
+    delta_fr = np.zeros((len(spikes), mov_bar_all.shape[0])) 
+    
+    for si,s in enumerate(mov_bar_all):
+
+        for n, st in enumerate(spikes):
+            st_alg = np.array(st) - sync_cam[s]
+            pre_fr = np.sum((st_alg > win_b[0]) & (st_alg <= win_b[1])) / \
+                (win_b[1] - win_b[0])
+            post_fr = np.sum((st_alg > win_r[0]) & (st_alg <= win_r[1])) / \
+                (win_r[1] - win_r[0])
+            
+            delta_fr[n, si] = post_fr - pre_fr
+
+    return delta_x, delta_fr
+
 def get_mean_fr_size(fr, state,  start = 0.1, stop = 0.3, step = 0.02, 
                      per=[5,95]):
     """
@@ -599,7 +658,7 @@ def lin_model_sac_sig(x_true, delta_fr, p = 0.05, n_p=1000):
 
     return ws
 
-def lin_model_sac(delta_x, delta_fr, m_names):
+def lin_model_sac(delta_x, delta_fr, m_names, sig=True):
     """
     Evalutes 3 models, [x,|x|,sign(x)] and returns the coefficients and the
     significant weights.
@@ -622,7 +681,8 @@ def lin_model_sac(delta_x, delta_fr, m_names):
         coefs = np.array([np.polyfit(x, neu, 1) for neu in delta_fr])       
         models[m_names[i]] = coefs
         
-        sig_ws[:, i] = lin_model_sac_sig(x, delta_fr)
+        if sig:
+            sig_ws[:, i] = lin_model_sac_sig(x, delta_fr)
         
         #ss_tot = np.sum((delta_fr - np.mean(delta_fr, axis=1, keepdims=True))**2,
         #                axis=1)
@@ -802,6 +862,48 @@ def get_MI(trial_fr, s):
     
     return mutual_info
 
+def get_sig_MI(mutual_info_raw, tw, basal_max = -0.25, p = 0.1, n_tw = 5):
+    """
+    Significant mutual information when compared with a basal distribution.
+    Keeps only significan values, otherwise zero.
+    
+    Parameters:
+    mutual_info_raw: np.ndarray, shape (n_neu, Tw)
+    tw : np.ndarray, shape (Tw)
+    basal_max : float, basal window end
+    p: float, p value
+    n_tw: int, number of consecutive windows with significant p
+
+    Returns:            
+    mutual_info : np.ndarray, shape (n_neu, Tw)
+    """
+    mutual_info = np.zeros_like(mutual_info_raw)
+
+    tm_basal = tw < basal_max
+    n_basal = sum(tm_basal)
+    ti_resp = np.arange(len(tw))[~ tm_basal]
+    mutual_info_basal = mutual_info_raw[:,tm_basal]
+    
+    for n in range(mutual_info.shape[0]):
+
+        sig_tw = 0
+        for ti in ti_resp:
+
+            if sum(mutual_info_basal[n,:] > mutual_info_raw[n,ti]) / n_basal < p:
+                sig_tw += 1
+                
+                if sig_tw == n_tw:
+                    for tii in range(n_tw):
+                        mutual_info[n, ti-tii] = mutual_info_raw[n, ti-tii]
+                        
+                elif sig_tw > n_tw:
+                    mutual_info[n, ti] = mutual_info_raw[n, ti]
+                    
+            else:
+                sig_tw = 0
+                    
+    return mutual_info
+
 def get_class_coding(fr, align_indx1, align_indx2, win=[-0.25, 1], 
                      p = 0.05, n_p = 1000, n_tw = 5, camara_fs = 200):
     """
@@ -937,6 +1039,38 @@ def neuron_PCA(fr, types, n_components = 10):
         pca_results[typ]["w"] = pca.components_
         pca_results[typ]["projection"] = \
             projection_full.T.reshape(n_components, t, c)
+
+    return pca_results
+
+def all_PCA(fr, n_components = 10):
+    """
+    Applies PCA and projects the data, concatenating time and class for all units.
+
+    Parameters:
+    fr: np.ndarray, shape (n, t, c)
+    n_components: int
+    
+    Returns:
+    pca_results: dict with the name of the type of dictionaries containing:
+        projection: ndarray, shape (n_components, t, c)
+        exp_var: ndarray, shape (n_components)
+        w: ndarrays shape (n_components, n_t)
+    """
+    n, t, c = fr.shape
+    result_names = ["projection", "exp_var", "w"]
+    
+        
+    pca_results = dict.fromkeys(result_names)
+    
+    X = fr.reshape(n, t * c).T
+
+    pca = PCA(n_components=n_components)
+    projection_full = pca.fit_transform(X)
+    
+    pca_results["exp_var"] = pca.explained_variance_ratio_
+    pca_results["w"] = pca.components_
+    pca_results["projection"] = \
+        projection_full.T.reshape(n_components, t, c)
 
     return pca_results
 
@@ -1329,7 +1463,7 @@ def plot_hist_typ(metric, cluster_type, colors, edges,
     plt.savefig(os.path.join(sp, "plots", name + "_hist_" + m_name + ".svg"))
     plt.show()
 
-def plot_sc_hist(rts_sc, c_types, edges, sp):
+def plot_sc_hist(rts_sc, c_types, edges, sp, exp = "all"):
     
     signs = [-1,1]
     alphas = [1,0.7]
@@ -1362,8 +1496,52 @@ def plot_sc_hist(rts_sc, c_types, edges, sp):
         plt.vlines(0,ylim[0],ylim[1],colors="grey", linestyle="dashed")
         plt.ylim(ylim)
         
-        plt.savefig(os.path.join(sp,"plots", neu_type + "_rt_hist.svg"))
+        plt.savefig(os.path.join(sp,"plots", exp + "_" + neu_type + "_rt_hist.svg"))
         plt.show()
+
+def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.2,1]):
+    
+    cluster_type = np.asanyarray(cluster_type)
+    unique_type = np.unique(cluster_type)
+    
+    sig_mask = mutual_info > 0
+    
+    fig, axes = plt.subplots(2,1, figsize=(12, 6))
+    
+    for neu_type in unique_type:
+        
+        mask_type_f = (cluster_type == neu_type)
+        mask_type = np.tile(mask_type_f[:, np.newaxis], (1, sig_mask.shape[1]))
+        mask_com = mask_type & sig_mask
+        
+        per_sig = np.sum(mask_com, axis=0) / np.sum(mask_type_f) * 100
+        
+        masked_mi = np.where(mask_com, mutual_info, np.nan)
+        mean_mi = np.nanmean(masked_mi, axis=0)
+        mean_mi = np.where(np.isnan(mean_mi), 0, mean_mi)
+        
+        axes[0].plot(tw, per_sig, color=colors[neu_type], label=neu_type)
+        axes[1].plot(tw, mean_mi, color=colors[neu_type])
+        
+    
+    axes[0].legend()
+    axes[0].set_ylabel("% neurons")
+    axes[0].set_xticklabels([])
+    
+    axes[1].set_ylabel("Information [bits]")
+    axes[1].set_xlabel("time [s]")
+               
+    for i in range(2):
+        axes[i].set_xlim([xlim[0], xlim[-1]])
+        for s in ['right', 'top']:
+            axes[i].spines[s].set_visible(False)
+
+        ylim = axes[i].get_ylim()
+        axes[i].vlines(0,ylim[0],ylim[1],colors="grey", linestyle="dashed")
+        axes[i].set_ylim(ylim)
+    
+    plt.savefig(os.path.join(sp, "plots", name + "_mi.svg"))
+    plt.show()
 
 def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):
     bins_1d = (edges[1:] + edges[:-1]) / 2
@@ -1443,6 +1621,52 @@ def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):
             plt.savefig(os.path.join(sp,"plots", "Neurons",
                                      str(n) + name +".png"))
             plt.close(fig)
+
+def plot_type_scatter(x, y, colors, cluster_type, sp, name="all",
+                      xlabel="m",ylabel="w",corr=False):
+    
+    c_types = np.array([colors[n] for n in cluster_type])
+    if "all" in name:
+        unique_clusters = colors.keys()
+        xlim = [np.min(x), np.max(x)]
+        ylim = [np.min(y), np.max(y)]
+        
+        fig, axes = plt.subplots(len(unique_clusters), 1, figsize=(10, 8))
+        
+        for i, c in enumerate(unique_clusters):
+            n_type = c_types == colors[c]
+
+            axes[i].scatter(x[n_type], y[n_type], c=colors[c], alpha=0.6)
+            
+            if corr:
+                corr_c = np.corrcoef(x[n_type], y[n_type])[0,1]
+                axes[i].legend([f"r = {corr_c:.2f}"])
+            axes[i].set_xlim(xlim)
+            axes[i].set_ylim(ylim)
+            axes[i].set_ylabel(ylabel)
+            if i == 2:
+                axes[i].set_xlabel(xlabel)
+            
+            for ax in ['left', 'bottom']:
+                axes[i].spines[ax].set_position('zero')
+        
+            for ax in ['right', 'top']:
+                axes[i].spines[ax].set_color('none')
+            
+    else:
+        plt.scatter(x, y, c=c_types, alpha=0.8)
+        
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        
+        for ax in ['left', 'bottom']:
+            plt.gca().spines[ax].set_position('zero')
+    
+        for ax in ['right', 'top']:
+            plt.gca().spines[ax].set_color('none')
+    
+    plt.savefig(os.path.join(sp,"plots", name + "_m_w.svg"))
+    plt.show()
 
 def plot_sac_amp_ex(delta_x, delta_fr, sca_fr, n_plot, cluster_type, colors,
                     sp, exp):
@@ -1687,7 +1911,7 @@ def plot_event(events, b, sac_colors, name, exp, sp, win = [-0.25, 0.25], camara
     plt.show()
     
 def plot_pca(tw, pca_results, colors, pr_colors, sp,
-             name="PCA_sc.svg", nc=3):
+             name="all", nc=3):
     
     types = colors.keys()
     
@@ -1719,16 +1943,17 @@ def plot_pca(tw, pca_results, colors, pr_colors, sp,
                 axes[c].spines[s].set_color(colors[typ])
                 
         plt.tight_layout()
-        plt.savefig(os.path.join(sp,"plots", typ + name))
+        plt.savefig(os.path.join(sp, "plots", name + "_" + typ + "_PCA.svg"))
 
         plt.show()
 
 def plot_multi_pca(tw, pca_results, colors, pr_colors, sp,
-             name="PCA3d_sc.svg", nc=3):
+             name="all", nc=3):
     
-    va = np.array([[90,20,45],
-                   [270,45,45]])
+    va = np.array([[90,90,45],
+                   [270,270,45]])
     i_0 = np.argwhere(tw==0)[0][0]
+    i_05 = np.argwhere(tw==0.5)[0][0]
     
     types = colors.keys()
     
@@ -1744,7 +1969,9 @@ def plot_multi_pca(tw, pca_results, colors, pr_colors, sp,
         
         
             axes[ti].scatter(proj[0, i_0, s],proj[1, i_0, s], proj[2, i_0, s],
-                             color=pr_colors[s],edgecolor="red",marker="^")
+                             color=pr_colors[s],edgecolor="gray",marker="^")
+            axes[ti].scatter(proj[0, i_05, s],proj[1, i_05, s], proj[2, i_05, s],
+                             color=pr_colors[s],edgecolor="gray",marker="o")
         
         axes[ti].set_xlabel("PC1", color=colors[typ])
         axes[ti].set_ylabel("PC2", color=colors[typ])
@@ -1761,7 +1988,7 @@ def plot_multi_pca(tw, pca_results, colors, pr_colors, sp,
         axes[ti].view_init(elev=va[0,ti], azim=va[1,ti])
     
     plt.tight_layout()
-    plt.savefig(os.path.join(sp,"plots", typ + name))
+    plt.savefig(os.path.join(sp,"plots", name + "_PCA_3D_sc.svg"))
     plt.show()
 
 def plot_cs_pc_w(pca_results, ws, cluster_types, name, sp, nc = 3):
@@ -1852,7 +2079,7 @@ def plot_pca_var(pca_results, exp_var_n, colors, sp, name, sig_nc=[]):
 
     plt.show()
 
-def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.01):
+def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.01, scatter=True):
     types = colors.keys()
     
     fig, axes = plt.subplots(nc, 1, figsize=(10, 8))
@@ -1876,6 +2103,24 @@ def plot_weights(pca_results, colors, sp, nc=3, edges=[-0.3,0.3], step=0.01):
     
     plt.savefig(os.path.join(sp,"plots", "PCAw.svg"))
     plt.show()
+    
+    if scatter:
+        for ti, typ in enumerate(types):
+            plt.scatter(pca_results[typ]["w"][0,:], pca_results[typ]["w"][1,:], 
+                        c=colors[typ], alpha=0.6)
+            
+        plt.xlabel("PC w1")
+        plt.ylabel("PC w2")
+        
+        axes = plt.gca()
+        for ax in ['left', 'bottom']:
+            axes.spines[ax].set_position('zero')
+    
+        for ax in ['right', 'top']:
+            axes.spines[ax].set_color('none')
+            
+        plt.savefig(os.path.join(sp,"plots", "PCAw_2D.svg"))
+        plt.show()
 
 def plot_types(experiments, all_types, colors, sp = "none"):
     
@@ -2002,3 +2247,4 @@ def plot_proj(tw, proj, delta_x, sac_colors):
     #plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
 
     plt.show()
+
