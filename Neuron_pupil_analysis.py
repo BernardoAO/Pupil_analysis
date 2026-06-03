@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tqdm import tqdm
 import Helper_functions as hf
-assert False
+#assert False
 
 # TODO saccades per stimuli
 
@@ -69,7 +69,7 @@ def sac_amp_analysis(saccades, pupil_center, valid_spiketimes, sync_cam,
                                        saccades_all, pupil_center[0,:])
     
     
-    models, sig_ws = hf.lin_model_sac(delta_x, delta_fr, m_names)
+    models, sig_ws = hf.lin_model_sac(delta_x, delta_fr, m_names, sig=False)
         
     if plot == "m_w":
         m = np.mean(delta_fr,axis=1)
@@ -131,12 +131,12 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
                                                 saccades["nasal"], win=win)    
     trial_fr = [trial_fr_t, trial_fr_n]
     fr_sc = np.stack((fr_sc_t, fr_sc_n), axis=-1)
-    
+
     if plot == "raster":
-        plts_sp = os.path.join(save_path, "plots", "Neurons", "mov_bar", exp)
+        plts_sp = os.path.join(save_path, "plots", "Neurons", "sac_dir")
         hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, sac_colors, 
                        msc_colors, tw, fr_sc, c_types, cluster_type, 
-                       sp = plts_sp, name="sac.png")
+                       sp = plts_sp, name="sac.svg")
 
     if an_type == "RT":
 
@@ -156,7 +156,7 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
             hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, sac_colors, 
                            msc_colors, tw, fr_sc, c_types, cluster_type, 
                            rts=[rts_sc_t, rts_sc_n], sp = plts_sp, 
-                           name = exp + "_sac.png")
+                           name = exp + "_sac.svg")
         
         elif plot == "hist":
             rt_edges = np.arange(-0.2, 0.5, 0.02)
@@ -218,13 +218,13 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "darkorange"]
 
 # Parameters 
-analysis = "sac_amp" # exp, exp_neu, ps_pc_corr,
+analysis = "exp" # exp, exp_neu, ps_pc_corr,
                      # ps_corr, pc_corr, ps_ev, pc_sim, 
                      # sac_amp; sac_RT, sac_MI, sac_dir, sac_PCA
 period =  "all" # "chirp"
 
 fr_win_name = "_100ms_causal.npy" #40c, 100c
-fr_win = [-0.1, 0] #[-0.05, 0.05] #
+fr_win = [-0.1, 0.] #[-0.04, 0.], [-0.1, 0.]
 
 ps_corr_edges = np.arange(-0.3, 0.32, 0.01)
 pc_corr_edges = np.arange(0., 0.2, 0.005)
@@ -232,14 +232,15 @@ pc_corr_edges = np.arange(0., 0.2, 0.005)
 save_rts = False
 
 units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
-                    # [30,70,355] #sac 
+                    # [30,70,74] [nw,tca,bw] sac_RT, 128,407
+                    # [8,355,379] 412 [nw,bw,tca] sac_dir
                     # double_sac [135,146,297,407]
 pre_load = False if units_for_plot else True
     
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = ['2022-12-20_15-08-10']
+#experiments = ['2022-12-20_15-08-10']
 # ["2022-12-20_15-08-10"] #,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
 
 results = defaultdict(list)
@@ -253,6 +254,10 @@ for exp in tqdm(experiments, desc="Files processed"):
     Spke_Bundle, spiketimes, SIN_data, connected_pairs_all = \
         hf.import_spike_data(exp, spike_bundle_path)
         
+        
+        
+    exp_pd_path =  os.path.join(pupil_data_path, "pupil_data_" + exp + ".pkl")
+
     # merge pupil data for the exp
     sync_cam, pupil_size, pupil_center, saccades = \
         hf.import_pupil_data(pupil_data_path, Spke_Bundle, exp, period)
@@ -261,6 +266,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     vis_stim, stim_colors, mov_bar = hf.get_stims(Spke_Bundle)
 
     if analysis == "exp":
+        """
         # Stimuli
         hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, 
                     save_path, saccades, sac_colors)
@@ -274,6 +280,13 @@ for exp in tqdm(experiments, desc="Files processed"):
                                save_path, exp)
         hf.plot_event(saccades, pupil_center[0,:], sac_colors, 
                       "x coordinate", exp, save_path)
+        
+        hf.plot_saccades_2d(saccades, pupil_center, sac_colors, exp, save_path)
+        """
+        
+        sac_var = hf.saccade_variance(pupil_center, saccades)
+        results["sac_var"].append(sac_var)
+        
 
     
     elif analysis == "ps_pc_corr":
@@ -335,7 +348,7 @@ for exp in tqdm(experiments, desc="Files processed"):
             delta_fr, models, sig_ws = sac_amp_analysis(
                 saccades, pupil_center, valid_spiketimes, sync_cam, firing_rate,
                 save_path, cluster_type, colors, exp, 
-                plot="m_w", dx = 0.01, n_plot = [26,355])
+                plot="example", dx = 0.01, n_plot = [8,355,379])
             
             results["delta_fr"].append(delta_fr)
             results["models"].append(models)
@@ -362,7 +375,7 @@ for exp in tqdm(experiments, desc="Files processed"):
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
                                  save_path, cluster_type, colors, exp,
-                                 an_type="RT", plot="hist")
+                                 an_type="RT", plot="raster_RT")
                 
             results["fr_sc"].append(fr_sc)
             results["rts_sc"].append(rts_sc) 
@@ -405,6 +418,7 @@ for exp in tqdm(experiments, desc="Files processed"):
         
 
 
+assert False
 
 ## All plots
 
@@ -526,10 +540,12 @@ else:
             hf.plot_weights(pca_results, colors, save_path, scatter=True)
             
         
-        
+
+path = r"D:\NP data\Visual Stimuli\save_folder_vis_matrices\mb.npy"
+mb = np.load(path)
 
 """
-
+ 
 indices = [355]#[8,41,48,87,74,229,230,273,385,407,355]
 
 

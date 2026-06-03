@@ -42,12 +42,16 @@ def create_pupil_data(exp, save_path, side, sessions_files, output_variables,
     
     return pupil_data_path, pupil_data
 
-def handle_exceptions(ROIs_smooth, tv, session):
+def handle_exceptions(ROIs_smooth, tv, session, height=260):
     if session == "2023-03-16-11-14-37":
         mask = tv < 0.15 * 60
         ROIs_smooth[:,:,mask] = np.nan
+        
     if session[:10] == "2023-03-22" or session[:7] == "2023-04":
         ROIs_smooth = np.flip(ROIs_smooth, axis=1)
+    else:
+        ROIs_smooth[:,1,:] = -ROIs_smooth[:,1,:] + height
+        
     return ROIs_smooth
 
 def time_smooth_ROI(ROIs, win, confidence = [], con_thr = 0.8):
@@ -165,6 +169,33 @@ def get_pupil_center(ROIs_smooth, pupil_size, centered=False):
         return pupil_center - np.nanmean(pupil_center, axis=1).reshape(-1,1)
     else:
         return pupil_center
+
+def normalize_pc(pupil_center, eyelids_mean):
+    """
+    Centers, rotates and scales pupil_center with respect to the 
+    4 eyelids mean, the left and right eyelid axis, and left and right 
+    eyelid lenght.
+    
+    Parameters:
+    - pupil_center: np.ndarray, shape (2, T) (x,y)
+    - eyelids_mean: np.ndarray, shape (4, 2)
+
+    Returns:
+    - pupil_center_norm: np.ndarray, shape (2, T)
+    """
+    c = np.mean(eyelids_mean, axis=0)
+    
+    d = eyelids_mean[1,:] - eyelids_mean[3,:]
+    length = np.linalg.norm(d)
+
+    u = d / length
+    v = np.array([-u[1], u[0]])
+    
+    R = np.column_stack([u, v])
+    
+    pupil_center_norm =  (R.T @ (pupil_center - c[:, None])) / length
+    
+    return pupil_center_norm
 
 def import_saccades(session, side, filename="saccades.txt"):
     """
@@ -355,7 +386,7 @@ def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
     n_frames = sum(n_points_ses)
     
     # Center
-    pupil_center_pd = pupil_data['pupil_center']
+    pupil_center_pd = pupil_data['pupil_center_norm']
     pupil_center = np.concatenate(pupil_center_pd.to_numpy(), axis = 1)
     
     # Saccades
@@ -492,6 +523,31 @@ def get_firing_rate(spike_times, bt, spk_count_path, win=[-0.05, 0.05],
     z_fr = (firing_rate - m_fr) / std_fr
     
     return firing_rate, z_fr
+
+def saccade_variance(pupil_center, saccades, win = [-0.1, 0.1], camara_fs=200):
+    """
+    Calculates the variance for x and y coor. in a window around the
+    saccade.
+
+    Parameters:
+    - pupil_center: np.ndarray, shape (2, T)
+    saccades : dict.
+
+    Returns:
+    sac_var : np.ndarray, shape (2, n_sac)
+    """
+    
+    saccades_all = np.concatenate((saccades["temporal"], 
+                                saccades["nasal"]), axis=0)
+    sac_var = np.zeros((2, saccades_all.shape[0]))
+    
+    for s,indx in enumerate(saccades_all):
+        wini = np.arange(indx + win[0]* camara_fs, indx + win[1]* camara_fs, 
+                         dtype=int)
+        sac_var[:, s] = np.var(
+            pupil_center[:, wini], axis=1)
+    
+    return sac_var
 
 def get_sac_amp(spikes, sync_cam, saccades, pupil_x,
                 win=[-0.2,0.2], camara_fs=200):
@@ -1188,7 +1244,9 @@ def get_t_significance(all_ps_corr, all_types_cat, n_p=1000):
 ##m Plotting
 
 def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
-                      eyelids_mean, saccade_indx, name, sp):
+                      eyelids_mean, saccade_indx, name, sp,
+                      width=256, height=260):
+    
     colors = {"size":"#9b5de5",
               "size_clean":"#D3B9F4",
               "x":"#00bbf9",
@@ -1237,12 +1295,14 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     yedges = np.linspace(np.min(eyelids_mean[:,1]),np.max(eyelids_mean[:,1]),200)
     h = ax3.hist2d(pupil_center[0, :], pupil_center[1, :], bins=[xedges,yedges], 
                        cmap='hot_r', norm= 'log') 
-    ax3.scatter(eyelids_mean[1,0], eyelids_mean[1,1], color="dodgerblue",zorder=2)
+    ax3.scatter(eyelids_mean[:,0], eyelids_mean[:,1], color="dodgerblue",zorder=2)
     cbar = fig.colorbar(h[3], ax=ax3, orientation='horizontal')
     cbar.set_label("Density")
     h[3].set_clim([1,1e3])
     
-    ax3.yaxis.set_inverted(True) 
+    ax3.set_xlim([0,width])
+    ax3.set_ylim([0,height])
+    #ax3.yaxis.set_inverted(True) 
     ax3.set_axis_off()
     
     fig.suptitle(name)
@@ -1499,7 +1559,7 @@ def plot_sc_hist(rts_sc, c_types, edges, sp, exp = "all"):
         plt.savefig(os.path.join(sp,"plots", exp + "_" + neu_type + "_rt_hist.svg"))
         plt.show()
 
-def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.2,1]):
+def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.25,1]):
     
     cluster_type = np.asanyarray(cluster_type)
     unique_type = np.unique(cluster_type)
@@ -1908,6 +1968,33 @@ def plot_event(events, b, sac_colors, name, exp, sp, win = [-0.25, 0.25], camara
     for s in ['right', 'top']:
         plt.gca().spines[s].set_visible(False)
     plt.savefig(os.path.join(sp,"plots", exp + name + ".svg"))
+    plt.show()
+    
+def plot_saccades_2d(saccades, pupil_center, sac_colors, name, sp, 
+                    win=[-0.2,0.2], camara_fs=200):
+    
+    wini = [int(w * camara_fs) for w in win]
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6), subplot_kw={'projection': 'polar'})    
+
+    for ci, c in enumerate(saccades):
+        indx = np.array(saccades[c])
+        
+        dx = pupil_center[0, indx + wini[1]] - pupil_center[0, indx + wini[0]]
+        dy = pupil_center[1, indx + wini[1]] - pupil_center[1, indx + wini[0]]
+        
+        r = np.zeros((len(dx),2))
+        r[:,1] = np.sqrt(dx**2 + dy**2)
+        theta = np.arctan2(dy, dx)
+        
+        print(dx)
+        for s in range(len(dx)):
+            ax.plot([theta[s], theta[s]], r[s,:], color=sac_colors[ci])
+        
+        #ax.set_rmax(2)
+        ax.set_rmin(0)  
+        ax.set_rorigin(0)
+        
+    plt.savefig(os.path.join(sp,"plots", name + "_sac_trayect_2d.svg"))
     plt.show()
     
 def plot_pca(tw, pca_results, colors, pr_colors, sp,

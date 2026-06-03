@@ -15,15 +15,15 @@ n_pupil = 8
 n_eyelid = 4
 fps = 200 # Hz
 smooth_window = 10
-output_variables = ["session", "awake","ROIs_smooth", "pupil_center", 
+output_variables = ["session", "awake","ROIs_smooth", "pupil_center", "pupil_center_norm", 
                     "pupil_size", "saccade_indx"]
 exception_files_tv = ["cam2_2023-04-17-13-31-32", "cam2_2023-04-13-12-42-47"]
 
 os.chdir(data_path)
 all_exp = [d for d in os.listdir()]
 
-work_exp = ['2022-12-20_15-08-10', '2022-12-21_13-09-10',
-            '2023-03-15_11-05-00','2023-03-15_15-23-14','2023-03-16_12-16-07']
+work_exp = all_exp#['2022-12-20_15-08-10', '2022-12-21_13-09-10',
+            #'2023-03-15_11-05-00','2023-03-15_15-23-14','2023-03-16_12-16-07']
 
 for exp in work_exp:
     
@@ -57,14 +57,14 @@ for exp in work_exp:
             ROI = np.array(DLC_data[frame_name]['coordinates']).reshape(n_pupil + n_eyelid, 2)
             ROIs[:,:,frame] = ROI
             confidence[:,frame] = np.squeeze(np.array(DLC_data[frame_name]['confidence']))
-        
+
         ## Time smooth
         ROIs_smooth = hf.time_smooth_ROI(ROIs, smooth_window)
         for r in range(ROIs_smooth.shape[0]):
             for x in range(ROIs_smooth.shape[1]):
                 ROIs_smooth[r,x,:] = hf.interpolate_outliers(tv, ROIs_smooth[r,x,:])
         
-        # Exceptios
+        # Exceptions
         ROIs_smooth = hf.handle_exceptions(ROIs_smooth, tv, session)
     
         ## Get size
@@ -83,25 +83,27 @@ for exp in work_exp:
         pupil_center = hf.get_pupil_center(ROIs_smooth[:n_pupil,:,:], 
                                            pupil_size_clean * eye_lenght)
         
+        pupil_center_norm = hf.normalize_pc(pupil_center, eyelids_mean)
+        
         ## Get saccades
         saccade_indx = hf.import_saccades(session, side)
         
         # Plot
         hf.plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
                               eyelids_mean, saccade_indx, session, save_path)
-    
+
         ## Save
         mask = pupil_data["session"] == session
     
         row_index = pupil_data.loc[mask].index[0]
         pupil_data.at[row_index, "ROIs_smooth"] = ROIs_smooth
         pupil_data.at[row_index, "pupil_center"] = pupil_center
+        pupil_data.at[row_index, "pupil_center_norm"] = pupil_center_norm
         pupil_data.at[row_index, "pupil_size"] = pupil_size_clean
         pupil_data.at[row_index, "saccade_indx"] = saccade_indx
     
 
     pupil_data.to_pickle(pupil_data_path)
     os.chdir(data_path)
-
 
 
