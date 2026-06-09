@@ -285,6 +285,157 @@ def get_stims(Spke_Bundle):
     
     return vis_stim, colors, mov_bar
 
+def get_sac_vis(saccades, sync_cam, vis_stim, Spke_Bundle, off_set = 0,
+                fs= 30000, screen_fs = 120):
+    """
+    For each saccade, returns the stimulus info.
+
+    Parameters:
+    saccades : dict
+    sync_cam : np.ndarray, shape (T)
+    vis_stim : list, len(unique vis_stim)
+    Spke_Bundle : dict
+    off_set : float [sec]
+
+    Returns:
+    sac_vis : dict with lists len(n_sac)
+    """
+    
+    sac_vis = {"time":[],
+               "direction":[],
+               "vis_stim":[],
+               "stim_TTL":[],
+               "stim_TTLn":[],           
+               "frame":[]}
+    
+    for direction in ["temporal","nasal"]:
+        for ti in saccades[direction]:
+            
+            found = False
+            sac_t = sync_cam[ti] + off_set
+            for s in vis_stim:
+                
+                if not found:
+                    stim_times = np.array(Spke_Bundle["events"][s]) / fs
+                    
+                    #stim_dur = Spke_Bundle["stim_params_files"]\
+                    #    [s]["stimulus"]["stimulus_duration_in_frames"] / screen_fs
+                    stim_dur = stim_times[1] - stim_times[0]
+                    
+                    dif = stim_times - sac_t 
+                    in_stim = (dif > 0) & (dif <= stim_dur)
+                    
+                    if np.any(in_stim):
+                        found = True
+                        
+                        sac_vis["vis_stim"].append(s)
+                        sac_vis["stim_TTL"].append(stim_times[in_stim][0])
+                        sac_vis["stim_TTLn"].append(np.argmax(in_stim))
+                        sac_vis["frame"].append(int(dif[in_stim] * screen_fs))
+            
+            sac_vis["time"].append(sac_t)
+            sac_vis["direction"].append(direction)
+            
+            if not found:
+                sac_vis["vis_stim"].append("nan")
+                sac_vis["stim_TTL"].append(np.nan)
+                sac_vis["stim_TTLn"].append(np.nan)
+                sac_vis["frame"].append(np.nan)
+            
+    return sac_vis
+
+def get_screen(sac_vis, Spke_Bundle, vis_stim,
+               vis_stim_dir = r"D:\NP data\Visual Stimuli\good"):
+    """
+    Reads the stim.npy files to obtain the screen at each given timepoint
+    
+    Parameters:
+    sac_vis : dict with lists len(n_sac)
+    Spke_Bundle : dict
+    vis_stim : list, len(unique vis_stim)
+    
+    Returns:
+    sac_vis : dict with lists len(n_sac)
+    """
+    n_pre_mb = 80
+    n_mb = 192
+    n_post_mb = 60 
+    mb_dur = n_pre_mb + n_mb + n_post_mb
+    
+    sac_vis["screen"] = [np.array([]) for s in range(len(sac_vis["time"]))]
+    ttl_stim = ["Sl36x22_d_3", "Sd36x22_l_3", "csd"]
+    mov_stim = ["Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc"]
+    
+    for vs_name in vis_stim:
+                     
+        if vs_name in ttl_stim:
+            stim_mat = np.load(os.path.join(vis_stim_dir, vs_name + ".npy"))
+            
+            for s, stim in enumerate(sac_vis["vis_stim"]):
+                 if stim == vs_name:
+                     frame = sac_vis["stim_TTLn"][s]
+                     sac_vis["screen"][s] = stim_mat[frame,:,:]
+        
+        elif vs_name in mov_stim:
+            stim_mat = np.load(os.path.join(vis_stim_dir, vs_name + ".npy"))
+            
+            for s, stim in enumerate(sac_vis["vis_stim"]):
+                 if stim == vs_name:
+                     frame = sac_vis["stim_TTLn"][s] % stim_mat.shape[0]
+                     sac_vis["screen"][s] = stim_mat[frame,:,:]
+        
+        elif vs_name == "mb":
+        
+            stim_mat = np.load(os.path.join(vis_stim_dir, "mb_120.npy"))
+            
+            total_frames = len(Spke_Bundle["events"]["mb"])*mb_dur
+            mb_screen = np.full((total_frames),np.nan)
+            
+            for ttl in range(len(Spke_Bundle["events"]["mb"])):
+                start = n_pre_mb + mb_dur*ttl
+                mb_screen[start:start + n_mb] = np.arange(n_mb) + mb_dur*ttl
+    
+            for s, stim in enumerate(sac_vis["vis_stim"]):
+                 if stim == vs_name:
+                     frame = mb_screen[sac_vis["frame"][s]]
+                     if np.isnan(frame):
+                         sac_vis["screen"][s] = stim_mat[0,:,:] * 0
+                     else:
+                         sac_vis["screen"][s] = stim_mat[int(frame),:,:]
+                       
+        elif vs_name == "chirp":
+            stim_mat = np.load(os.path.join(vis_stim_dir, vs_name + ".npy"))
+            
+            for s, stim in enumerate(sac_vis["vis_stim"]):
+                 if stim == vs_name:
+                     frame = sac_vis["frame"][s]
+                     print(frame)
+                     #sac_vis["screen"][s] = stim_mat[frame,:,:]
+                     
+    return sac_vis
+
+
+def get_screen_dir(sac_vis, scr_sz = [22, 36], dirs = ["temporal","nasal"]):
+    """
+    Mean screen for each saccade direction
+
+    Parameters:
+    sac_vis : dict
+
+    Returns:
+    dif_screen : np.ndarray, shape (2, scr_sz0, scr_sz1)
+
+    """
+    dif_screen = np.zeros((len(dirs), scr_sz[0], scr_sz[1]))
+    
+    for d,direction in enumerate(dirs):
+        screen_dir = np.array([screen for s,screen in enumerate(sac_vis["screen"])
+                                if screen.size > 1 and sac_vis["direction"][s] == direction])
+        
+        dif_screen[d,:,:] = np.mean(screen_dir, axis=0)
+    
+    return dif_screen
+
 def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1, 
                min_a = 0.05, camara_fs = 200):
     """
@@ -1350,6 +1501,24 @@ def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, name, sp,
     plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
     plt.show()
 
+def plot_mean_screen(dif_screen, name):
+    fig, axes = plt.subplots(3,1)
+    max_bright = 255
+    
+    for d in range(2):
+    
+        axes[d].imshow(dif_screen[d,:,:], cmap="gray")
+        axes[d].images[0].set_clim(0,max_bright)
+        axes[d].set_axis_off()
+    
+    axes[2].imshow(dif_screen[0,:,:] - dif_screen[1,:,:], cmap="seismic")
+    axes[2].images[0].set_clim(-max_bright,max_bright)
+    axes[2].set_axis_off()
+    
+    plt.suptitle(name)
+    plt.tight_layout()
+    plt.show()
+
 def plot_ps_pc(all_ps, all_pc, sp):
     
     ps_pc = np.zeros((len(all_ps)))
@@ -1405,6 +1574,27 @@ def plot_sac_trayectory(saccades, pupil_center, sac_colors, sp, name,
         plt.xlabel("pupil postion")
     
     plt.savefig(os.path.join(sp,"plots", name + "_sac_trayect.svg"))
+    plt.show()
+
+def plot_sac_var(sac_var, sp, v_max=0.0015):
+
+    l = [0, v_max]
+    mean_var = np.zeros((2,len(sac_var)))
+    for s,var in enumerate(sac_var):
+        mean_var[:,s] = np.mean(var, axis=1)
+
+    plt.scatter(mean_var[0,:],mean_var[1,:], color="black")
+    plt.plot(l,l,color="grey",linestyle="--")
+    plt.ylim(l)
+    plt.xlim(l)
+
+    plt.xlabel("x var")
+    plt.ylabel("y var")
+    
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)
+    
+    plt.savefig(os.path.join(sp, "plots", "sac_var_all.svg"))
     plt.show()
 
 def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
@@ -1557,6 +1747,34 @@ def plot_sc_hist(rts_sc, c_types, edges, sp, exp = "all"):
         plt.ylim(ylim)
         
         plt.savefig(os.path.join(sp,"plots", exp + "_" + neu_type + "_rt_hist.svg"))
+        plt.show()
+
+def plot_all_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
+    
+    types = colors.keys()
+    
+    for ti, typ in enumerate(types):    
+        fig, ax = plt.subplots()
+        
+        rts_sc_typ = []        
+        for e in range(len(rts_sc)):
+            ct_exp = np.asanyarray(cluster_type[e])
+            rts = rts_sc[e]
+            rts_sc_typ.append(rts[(ct_exp == typ) & (~np.isnan(rts))])
+        
+        ax.boxplot(rts_sc_typ, sym="", vert=False,
+                   boxprops=dict(color=colors[typ]),
+                   whiskerprops=dict(color=colors[typ]),
+                   capprops=dict(color=colors[typ]),
+                   medianprops=dict(color=colors[typ]))
+        
+        ax.plot([0,0],[1,10],color="grey",linestyle="--")
+        ax.set_xlim(xlim)
+        ax.set_xlabel("time [s]")
+        for s in ['right', 'top']:
+            ax.spines[s].set_visible(False)
+        
+        plt.savefig(os.path.join(sp, "plots", typ+"_rts_boxplot.svg"))
         plt.show()
 
 def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.25,1]):

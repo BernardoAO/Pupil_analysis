@@ -3,7 +3,7 @@
 import numpy as np
 import os
 import pickle
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import scipy.signal as signal
 import Helper_functions as hf
 
@@ -22,7 +22,7 @@ exception_files_tv = ["cam2_2023-04-17-13-31-32", "cam2_2023-04-13-12-42-47"]
 os.chdir(data_path)
 all_exp = [d for d in os.listdir()]
 
-work_exp = all_exp#['2022-12-20_15-08-10', '2022-12-21_13-09-10',
+work_exp = ["2023-03-22_12-22-12"] #all_exp#['2022-12-20_15-08-10', '2022-12-21_13-09-10',
             #'2023-03-15_11-05-00','2023-03-15_15-23-14','2023-03-16_12-16-07']
 
 for exp in work_exp:
@@ -91,7 +91,38 @@ for exp in work_exp:
         # Plot
         hf.plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center, 
                               eyelids_mean, saccade_indx, session, save_path)
-
+        
+        def plot_norm_pc(tv, pupil_center, saccades, sp, xlim=[17,18.5]):
+            colors = {"x":"#00bbf9",
+                      "y":"#00f5d4",
+                      "temporal":"navy",
+                      "nasal":"violet"}
+            
+            tv = tv / 60 # minutes
+            
+            fig, ax = plt.subplots()
+            # Second subplot: pupil center
+            ax.plot(tv, pupil_center[0, :], color=colors["x"], label="x")
+            ax.plot(tv, pupil_center[1, :], color=colors["y"], label="y")
+            
+            ylim = ax.get_ylim()
+            for s in ["temporal","nasal"]:
+                saccades = saccade_indx[s]
+                for idx in saccades:
+                    ax.vlines(tv[idx], ylim[0], ylim[1], 
+                               colors=colors[s], linestyles="--")
+            ax.set_ylim(ylim)
+            
+            ax.set_xlim(xlim)
+            ax.set_xlabel("time [m]")
+            ax.set_ylabel("Norm. coor.")
+            ax.legend()
+            ax.spines[['right', 'top']].set_visible(False)
+            
+            plt.savefig(os.path.join(sp, "plots", "norm_pupil_plot.svg"))
+            
+        plot_norm_pc(tv, pupil_center_norm, saccade_indx, save_path)
+        
         ## Save
         mask = pupil_data["session"] == session
     
@@ -102,7 +133,7 @@ for exp in work_exp:
         pupil_data.at[row_index, "pupil_size"] = pupil_size_clean
         pupil_data.at[row_index, "saccade_indx"] = saccade_indx
     
-
+    assert False
     pupil_data.to_pickle(pupil_data_path)
     os.chdir(data_path)
 

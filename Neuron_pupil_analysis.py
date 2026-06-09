@@ -150,7 +150,8 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
         
         rts_sc = np.array([np.where(pref_sc[:, None] == 0, rts_sc_t, rts_sc_n),
                            np.where(pref_sc[:, None] == 1, rts_sc_t, rts_sc_n)])
-
+        # [(pref.,nonp.),n, (rt,dir)]
+        
         if plot == "raster_RT":
             plts_sp = os.path.join(save_path, "plots", "Neurons", "reaction time")
             hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, sac_colors, 
@@ -218,7 +219,7 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "darkorange"]
 
 # Parameters 
-analysis = "exp" # exp, exp_neu, ps_pc_corr,
+analysis = "sac_vis" # exp, exp_neu, ps_pc_corr, sac_vis
                      # ps_corr, pc_corr, ps_ev, pc_sim, 
                      # sac_amp; sac_RT, sac_MI, sac_dir, sac_PCA
 period =  "all" # "chirp"
@@ -229,7 +230,7 @@ fr_win = [-0.1, 0.] #[-0.04, 0.], [-0.1, 0.]
 ps_corr_edges = np.arange(-0.3, 0.32, 0.01)
 pc_corr_edges = np.arange(0., 0.2, 0.005)
 
-save_rts = False
+save_rts = True
 
 units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
                     # [30,70,74] [nw,tca,bw] sac_RT, 128,407
@@ -240,7 +241,7 @@ pre_load = False if units_for_plot else True
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-#experiments = ['2022-12-20_15-08-10']
+experiments = ['2023-03-16_12-16-07']
 # ["2022-12-20_15-08-10"] #,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
 
 results = defaultdict(list)
@@ -255,7 +256,6 @@ for exp in tqdm(experiments, desc="Files processed"):
         hf.import_spike_data(exp, spike_bundle_path)
         
         
-        
     exp_pd_path =  os.path.join(pupil_data_path, "pupil_data_" + exp + ".pkl")
 
     # merge pupil data for the exp
@@ -266,7 +266,6 @@ for exp in tqdm(experiments, desc="Files processed"):
     vis_stim, stim_colors, mov_bar = hf.get_stims(Spke_Bundle)
 
     if analysis == "exp":
-        """
         # Stimuli
         hf.plot_exp(Spke_Bundle, sync_cam, vis_stim, stim_colors, exp, 
                     save_path, saccades, sac_colors)
@@ -282,12 +281,21 @@ for exp in tqdm(experiments, desc="Files processed"):
                       "x coordinate", exp, save_path)
         
         hf.plot_saccades_2d(saccades, pupil_center, sac_colors, exp, save_path)
-        """
         
         sac_var = hf.saccade_variance(pupil_center, saccades)
         results["sac_var"].append(sac_var)
+    
+    elif analysis == "sac_vis":
         
-
+        off_sets = [0,-0.1]
+        for off_set in off_sets:
+            sac_vis = hf.get_sac_vis(saccades, sync_cam, vis_stim, Spke_Bundle,
+                                     off_set=off_set)
+            sac_vis = hf.get_screen(sac_vis, Spke_Bundle, vis_stim)
+    
+            dif_screen = hf.get_screen_dir(sac_vis)
+            title_name = "offset of " + str(off_set) + "s"
+            hf.plot_mean_screen(dif_screen, title_name)
     
     elif analysis == "ps_pc_corr":
         results["ps"].append(pupil_size)
@@ -417,13 +425,15 @@ for exp in tqdm(experiments, desc="Files processed"):
             results["PCA_var"].append([pca_results, exp_var_n])
         
 
-
-assert False
+#assert False
 
 ## All plots
 
 if analysis == "ps_pc_corr":
     hf.plot_ps_pc(results["ps"], results["pc"], save_path)
+    
+elif analysis == "exp":
+    hf.plot_sac_var(results["sac_var"], save_path)
 
 else:    
     all_types_cat = [x for exp in results["types"] for x in exp]
@@ -479,6 +489,9 @@ else:
         rts_sc_all = np.concatenate([rts for rts in results["rts_sc"]], axis=1)
         
         hf.plot_sc_hist(rts_sc_all, c_types_all, rt_edges, save_path)
+        
+        rts_sc_pr = [rt[0,:,0] for rt in results["rts_sc"]]
+        hf.plot_all_rt(rts_sc_pr, results["types"], colors, save_path)
     
     elif analysis == "sac_MI":
         
@@ -539,13 +552,21 @@ else:
             # weights
             hf.plot_weights(pca_results, colors, save_path, scatter=True)
             
-        
 
-path = r"D:\NP data\Visual Stimuli\save_folder_vis_matrices\mb.npy"
-mb = np.load(path)
 
 """
- 
+vis_stim_dir =  r"D:\NP data\Visual Stimuli\good"
+for vs in vis_stim:
+    if not vs == "mb":
+        stim_mat = np.load(os.path.join(vis_stim_dir, vs + ".npy"))
+        print(vs, " n ttls : ", len(Spke_Bundle["events"][vs]), ", shape stim mat : ",
+              stim_mat.shape[0])
+
+vs= "mb"
+stim_mat = np.load(os.path.join(vis_stim_dir, "mb_120.npy"))
+print(vs, " n ttls : ", len(Spke_Bundle["events"][vs]), ", shape stim mat : ",
+      stim_mat.shape[0])
+
 indices = [355]#[8,41,48,87,74,229,230,273,385,407,355]
 
 
