@@ -138,20 +138,27 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
                        msc_colors, tw, fr_sc, c_types, cluster_type, 
                        sp = plts_sp, name="sac.svg")
 
-    if an_type == "RT":
-
-        # Response times
-        rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], p=0.01, permute=False)
-        rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], p=0.01, permute=False)
+    if an_type[:2] == "RT":
         
-        # Preferred direction
-        max_fr = np.max(fr_sc, axis=1)
-        pref_sc = np.argmax(max_fr, axis=1)
-        
-        rts_sc = np.array([np.where(pref_sc[:, None] == 0, rts_sc_t, rts_sc_n),
-                           np.where(pref_sc[:, None] == 1, rts_sc_t, rts_sc_n)])
-        # [(pref.,nonp.),n, (rt,dir)]
-        
+        if an_type == "RT_dir":
+            # Response times
+            rts_sc_t = hf.get_response_times(firing_rate, saccades["temporal"], p=0.01, permute=False)
+            rts_sc_n = hf.get_response_times(firing_rate, saccades["nasal"], p=0.01, permute=False)
+            
+            # Preferred direction
+            max_fr = np.max(fr_sc, axis=1)
+            pref_sc = np.argmax(max_fr, axis=1)
+            
+            rts_sc = np.array([np.where(pref_sc[:, None] == 0, rts_sc_t, rts_sc_n),
+                               np.where(pref_sc[:, None] == 1, rts_sc_t, rts_sc_n)])
+            # [(pref.,nonp.),n, (rt,dir)]
+            
+        elif an_type == "RT_all":
+            # Response times
+            rts_sc = hf.get_response_times(firing_rate, saccades_all, p=0.01, permute=False)
+            pref_sc = np.zeros((fr_sc.shape[0]))
+            rts_sc = np.array([rts_sc,rts_sc])
+            
         if plot == "raster_RT":
             plts_sp = os.path.join(save_path, "plots", "Neurons", "reaction time")
             hf.plot_raster(valid_spiketimes, sync_cam, saccades_all, sac_colors, 
@@ -162,6 +169,9 @@ def saccade_analysis(saccades, pupil_center, firing_rate, valid_spiketimes,
         elif plot == "hist":
             rt_edges = np.arange(-0.2, 0.5, 0.02)
             hf.plot_sc_hist(rts_sc, c_types, rt_edges, save_path, exp)
+            
+        elif plot == "scat":
+            hf.plot_sc_scat(rts_sc, c_types, save_path, exp)
             
         return tw, fr_sc, rts_sc, pref_sc
     
@@ -219,7 +229,7 @@ colors =  {"TCA":"orchid", "NW":"salmon", "BW":"black"}
 sac_colors = ["navy", "darkorange"]
 
 # Parameters 
-analysis = "sac_vis" # exp, exp_neu, ps_pc_corr, sac_vis
+analysis = "sac_RT" # exp, exp_neu, ps_pc_corr, sac_vis
                      # ps_corr, pc_corr, ps_ev, pc_sim, 
                      # sac_amp; sac_RT, sac_MI, sac_dir, sac_PCA
 period =  "all" # "chirp"
@@ -230,10 +240,10 @@ fr_win = [-0.1, 0.] #[-0.04, 0.], [-0.1, 0.]
 ps_corr_edges = np.arange(-0.3, 0.32, 0.01)
 pc_corr_edges = np.arange(0., 0.2, 0.005)
 
-save_rts = True
+save_rts = False
 
 units_for_plot = [] # [357(1),368,404] #SCE #22 ps_corr 
-                    # [30,70,74] [nw,tca,bw] sac_RT, 128,407
+                    # [30,70,108] [nw,tca,bw] sac_RT, 128,407
                     # [8,355,379] 412 [nw,bw,tca] sac_dir
                     # double_sac [135,146,297,407]
 pre_load = False if units_for_plot else True
@@ -241,7 +251,7 @@ pre_load = False if units_for_plot else True
 experiments = [exp[11:-4] for exp in os.listdir(pupil_data_path)]
 experiments.sort()
 
-experiments = ['2023-03-16_12-16-07']
+#experiments = ["2022-12-20_15-08-10"] 
 # ["2022-12-20_15-08-10"] #,"2023-03-16_12-16-07","2023-04-18_12-10-34"]
 
 results = defaultdict(list)
@@ -288,6 +298,7 @@ for exp in tqdm(experiments, desc="Files processed"):
     elif analysis == "sac_vis":
         
         off_sets = [0,-0.1]
+        screen_t = []
         for off_set in off_sets:
             sac_vis = hf.get_sac_vis(saccades, sync_cam, vis_stim, Spke_Bundle,
                                      off_set=off_set)
@@ -296,6 +307,13 @@ for exp in tqdm(experiments, desc="Files processed"):
             dif_screen = hf.get_screen_dir(sac_vis)
             title_name = "offset of " + str(off_set) + "s"
             hf.plot_mean_screen(dif_screen, title_name)
+
+            #for n in range(len(sac_vis["screen"])):
+            #    if sac_vis["screen"][n].size > 1:
+            hf.plot_screen_ex(sac_vis, save_path, n=30)
+            screen_t.append(screen_t)
+            
+        results["dif_screen"].append(screen_t)
     
     elif analysis == "ps_pc_corr":
         results["ps"].append(pupil_size)
@@ -383,7 +401,7 @@ for exp in tqdm(experiments, desc="Files processed"):
                 saccade_analysis(saccades, pupil_center, firing_rate, 
                                  valid_spiketimes, sync_cam, c_types, 
                                  save_path, cluster_type, colors, exp,
-                                 an_type="RT", plot="raster_RT")
+                                 an_type="RT_dir", plot="scat")
                 
             results["fr_sc"].append(fr_sc)
             results["rts_sc"].append(rts_sc) 
@@ -424,8 +442,6 @@ for exp in tqdm(experiments, desc="Files processed"):
             results["fr_sc"].append(fr_sc)
             results["PCA_var"].append([pca_results, exp_var_n])
         
-
-#assert False
 
 ## All plots
 
@@ -489,6 +505,7 @@ else:
         rts_sc_all = np.concatenate([rts for rts in results["rts_sc"]], axis=1)
         
         hf.plot_sc_hist(rts_sc_all, c_types_all, rt_edges, save_path)
+        hf.plot_sc_scat(rts_sc_all, c_types_all, save_path)
         
         rts_sc_pr = [rt[0,:,0] for rt in results["rts_sc"]]
         hf.plot_all_rt(rts_sc_pr, results["types"], colors, save_path)
@@ -554,19 +571,8 @@ else:
             
 
 
+
 """
-vis_stim_dir =  r"D:\NP data\Visual Stimuli\good"
-for vs in vis_stim:
-    if not vs == "mb":
-        stim_mat = np.load(os.path.join(vis_stim_dir, vs + ".npy"))
-        print(vs, " n ttls : ", len(Spke_Bundle["events"][vs]), ", shape stim mat : ",
-              stim_mat.shape[0])
-
-vs= "mb"
-stim_mat = np.load(os.path.join(vis_stim_dir, "mb_120.npy"))
-print(vs, " n ttls : ", len(Spke_Bundle["events"][vs]), ", shape stim mat : ",
-      stim_mat.shape[0])
-
 indices = [355]#[8,41,48,87,74,229,230,273,385,407,355]
 
 

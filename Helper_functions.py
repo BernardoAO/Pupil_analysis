@@ -241,13 +241,13 @@ def import_saccades(session, side, filename="saccades.txt"):
 
     return data
 
-def get_stims(Spke_Bundle):
+def get_stims(Spke_Bundle, mb_offset = 0.6, fs = 30000):
     """
     Visual stimuli for each recording.
 
     Parameters:
     - Spke_Bundle : dict
-    - sync_cam : list
+    - mb_offset : float (sec)
     
     Returns:
     - vis_stim : list
@@ -270,7 +270,7 @@ def get_stims(Spke_Bundle):
     # Moving bar
     
     mov_bar = dict.fromkeys(["temporal","nasal"], np.array([], dtype=np.int64))
-    mb = Spke_Bundle["events"]["mb"]
+    mb = Spke_Bundle["events"]["mb"] + mb_offset * fs
     mb_or = Spke_Bundle["stim_params_files"]["mb"]["stimulus"]["sequence"]["orientations"]
     sync_cam = Spke_Bundle["Synchronization_TTLs"]["Sync_cam"]
     
@@ -1501,9 +1501,16 @@ def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, name, sp,
     plt.savefig(os.path.join(sp,"plots", name + "_session.svg"))
     plt.show()
 
-def plot_mean_screen(dif_screen, name):
+def plot_screen_ex(sac_vis, sp, n = 3, max_bright = 255):
+
+    plt.imshow(sac_vis["screen"][n], cmap="gray")
+    plt.clim(0, max_bright)
+    plt.gca().set_axis_off()
+    plt.savefig(os.path.join(sp,"plots", str(n) + "_ex_screen.svg"))
+    plt.show()
+
+def plot_mean_screen(dif_screen, name, max_bright = 255):
     fig, axes = plt.subplots(3,1)
-    max_bright = 255
     
     for d in range(2):
     
@@ -1747,6 +1754,29 @@ def plot_sc_hist(rts_sc, c_types, edges, sp, exp = "all"):
         plt.ylim(ylim)
         
         plt.savefig(os.path.join(sp,"plots", exp + "_" + neu_type + "_rt_hist.svg"))
+        plt.show()
+
+def plot_sc_scat(rts_sc, c_types, sp, name = "all", xlim=[-0.2, 0.5]):
+    
+    unique_type = np.unique(c_types)
+    
+    for neu_type in unique_type:
+        type_mask = c_types == neu_type
+
+        plt.scatter(rts_sc[0,type_mask,0], rts_sc[1,type_mask,0],
+                    facecolor=neu_type, alpha=0.7)
+        
+        plt.plot(xlim,xlim,linestyle="--",color="grey")
+        
+        for s in ['right', 'top']:
+            plt.gca().spines[s].set_visible(False)
+            
+        plt.xlabel("RT pref.")
+        plt.ylabel("RT nonpref.")
+        plt.xlim(xlim)
+        plt.ylim(xlim)
+                
+        plt.savefig(os.path.join(sp,"plots", name + "_" + neu_type + "_rt_hist.svg"))
         plt.show()
 
 def plot_all_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
