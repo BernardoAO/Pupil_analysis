@@ -2,7 +2,6 @@
 ### Bernardo AO
 import numpy as np
 from scipy import interpolate 
-import scipy.signal as signal
 from scipy import stats
 import pandas as pd
 
@@ -16,7 +15,6 @@ from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib import colors as pltcolors
 
 from joblib import Parallel, delayed
 
@@ -344,7 +342,7 @@ def get_sac_vis(saccades, sync_cam, vis_stim, Spke_Bundle, off_set = 0,
             
     return sac_vis
 
-def get_screen(sac_vis, Spke_Bundle, vis_stim,
+def get_screen(sac_vis, Spke_Bundle, vis_stim, verbose=True,
                vis_stim_dir = r"D:\NP data\Visual Stimuli\good"):
     """
     Reads the stim.npy files to obtain the screen at each given timepoint
@@ -409,9 +407,13 @@ def get_screen(sac_vis, Spke_Bundle, vis_stim,
             for s, stim in enumerate(sac_vis["vis_stim"]):
                  if stim == vs_name:
                      frame = sac_vis["frame"][s]
-                     print(frame)
-                     #sac_vis["screen"][s] = stim_mat[frame,:,:]
-                     
+                     if frame < stim_mat.shape[0]:
+                         sac_vis["screen"][s] = stim_mat[frame,:,:]
+    
+    if verbose:
+        acc_sc = np.array([1 if s.size > 1 else 0 for s in sac_vis["screen"]])
+        print(f"Accounted saccades: {sum(acc_sc)}/{len(acc_sc)}")
+    
     return sac_vis
 
 
@@ -436,56 +438,6 @@ def get_screen_dir(sac_vis, scr_sz = [22, 36], dirs = ["temporal","nasal"]):
     
     return dif_screen
 
-def get_events(b, window_pre = 2, window_post = 1, n_std = 3, rp = 1, 
-               min_a = 0.05, camara_fs = 200):
-    """
-    Estimates event times of high behavior, by calculating a moving mean in a 
-    pre event window, and comparing it to a post event window mean.
-
-    Parameters:
-    - b: np.ndarray, shape (T) or (2,T)
-    - window_pre: float, seconds of pre window
-    - window_post: float, seconds of post window
-    - n_std: float, number of std between pre and post mean to mark an event
-    - rp: float, minimum time between events
-    - min_a: float, minimum amplitud
-    
-    Returns:
-    - event_indx : list, length (n_events)
-    """
-    pre_i = window_pre * camara_fs
-    post_i = window_post * camara_fs
-    
-    event_indx = []
-    event_types = []
-    if b.ndim == 1:
-        for ti in range(pre_i, len(b)-post_i):
-            if not event_indx or (ti - event_indx[-1]) / camara_fs > rp:
-                tw_pre = np.arange(ti-pre_i, ti)
-                m_pre = np.mean(b[tw_pre])
-                std_pre = np.std(b[tw_pre])
-                
-                tw_post = np.arange(ti, ti+post_i)
-                m_post = np.mean(b[tw_post])
-        
-                if m_post > m_pre + n_std*std_pre and m_post - m_pre > min_a:
-                    event_indx.append(ti)
-    else:
-        for ti in range(pre_i, b.shape[-1]-post_i):
-            if not event_indx or (ti - event_indx[-1]) / camara_fs  > rp:
-                tw_pre = np.arange(ti -pre_i, ti)
-                m_pre = np.mean(b[:,tw_pre], axis=1)
-                
-                tw_post = np.arange(ti, ti + post_i)
-                m_post = np.mean(b[:,tw_post], axis=1)
-                
-                vec = m_post - m_pre
-                if np.linalg.norm(vec) > n_std:
-                    event_indx.append(ti)
-                    angle = np.arctan2(vec[1], vec[0])
-                    event_types.append(angle)
-                    
-    return np.array(event_indx), np.array(event_types)
     
 def import_spike_data(exp, spike_bundle_path, 
                       fs = 30000):
@@ -768,69 +720,6 @@ def get_delta_fr(spikes, sync_cam, mov_bar,
 
     return delta_x, delta_fr
 
-def get_mean_fr_size(fr, state,  start = 0.1, stop = 0.3, step = 0.02, 
-                     per=[5,95]):
-    """
-    Calculates the mean and std of the firng rate for a given state.
-    
-    Parameters:
-    - fr: np.ndarray, shape (n_neu, T)
-    - state: np.ndarray, shape (T)
-    - start, stop, step: float, edges for the bining of the state vector
-    - per: list of two ints
-
-    Returns:
-    - stats: np.ndarray, shape (n_neu, n_bins, 3) # mean,upper/lower percentil 
-    - s_bins: np.ndarray, shape (n_bins)
-    """
-    
-    s_edges = np.arange(start, stop, step)
-    s_bins = (s_edges[:-1] + s_edges[1:]) / 2
-    
-    bin_indx = np.digitize(state, s_edges) - 1
-    valid_mask = (bin_indx >= 0) & (bin_indx < len(s_bins))
-    
-    stats = np.empty((fr.shape[0], len(s_bins), 3))
-    
-    for b in range(len(s_bins)):
-        in_bin = (bin_indx == b) & valid_mask
-        if np.any(in_bin):
-            stats[:, b, 0] = np.mean(fr[:, in_bin], axis=1)
-            stats[:, b, 1] = np.percentile(fr[:, in_bin], per[0], axis=1)
-            stats[:, b, 2] = np.percentile(fr[:, in_bin], per[1], axis=1)
-
-    return stats, s_bins
-
-def get_mean_fr_center(fr, pupil_center, edges):
-    """
-    Calculates the mean firng rate for 2d coordinates.
-    
-    Parameters:
-    - fr: np.ndarray, shape (n_neu, T)
-    - pupil_center: np.ndarray, shape (2,T)
-    - edges: np.ndarray, shape (2, n_bins + 1)
-
-    Returns:
-    - mean_fr: np.ndarray, shape (n_neu,n_bins)
-    """
-    ix = np.digitize(pupil_center[0, :], edges) - 1
-    iy = np.digitize(pupil_center[1, :], edges) - 1
-    
-    ix = np.clip(ix, 0, len(edges) - 2)
-    iy = np.clip(iy, 0, len(edges) - 2)
-
-    nx = len(edges) - 1
-    n_bins = nx * (len(edges) - 1)
-    bin_indx = ix + iy * nx
-
-    mean_fr = np.empty((fr.shape[0], n_bins))    
-    for b in range(n_bins):
-        in_bin = bin_indx == b
-        if np.any(in_bin):
-            mean_fr[:, b] = np.mean(fr[:, in_bin], axis=1)
-    
-    return mean_fr
-
 def lin_model_sac_sig(x_true, delta_fr, p = 0.05, n_p=1000):
     """
     Evalutes a linear model with permutations.
@@ -898,24 +787,6 @@ def lin_model_sac(delta_x, delta_fr, m_names, sig=True):
         # r2s[:,i] = 1 - ss_res / ss_tot
 
     return models, sig_ws
-
-def get_correlation(z_fr, bt):
-    """Gets the correlation between the firing rate matrix z_fr and the 
-    behavioral variable bt
-    
-    Parameters:
-    - z_fr: np.ndarray, shape (n_neu, T)
-    - bt: np.ndarray, shape (T)
-
-    Returns:
-    - neu_bt_corr: np.ndarray, shape (n_neu)
-    """
-    n_neu = z_fr.shape[0]
-    neu_bt_corr = np.empty(n_neu)
-    for n in range(n_neu):
-        neu_bt_corr[n] = np.corrcoef(z_fr[n,:], bt)[0,1]
-
-    return neu_bt_corr
     
 def get_similarity(mean_fr, cluster_type, colors):
     """
@@ -1173,40 +1044,6 @@ def get_class_coding(fr, align_indx1, align_indx2, win=[-0.25, 1],
                 sig_tw = 0
 
     return class_code
-
-def get_mean_fr_2d(mean_fr, embedding, emb_p, c_types, sigma=1):
-    """
-    Compute the mean fr weighted by a gaussian distances of 2D points from 
-    a list of centers. Also gives a mean color based on c_types.
-    
-    Parameters:
-    mean_fr: np.ndarray, shape (n,Tw)
-    embedding: np.ndarray, shape (n, 2)
-    emb_p: np.ndarray, shape (n_points, 2)
-    c_types: np.ndarray, colors in Hex, shape (n)
-    sigma: float, standard deviation of the Gaussian.
-    
-    Returns:
-    mean_fr_p: ndarray, shape (n_points,Tw)
-    mean_c_p: list, lenght (n_points)
-    """
-    
-    rgb_colors = np.array([pltcolors.to_rgb(c) for c in c_types])
-    
-    mean_fr_p = np.empty((emb_p.shape[0], mean_fr.shape[1]))
-    mean_c_p = []
-    
-    for p in range(emb_p.shape[0]):
-        diff = embedding - emb_p[p,:]
-        dist2 = np.sum(diff**2, axis=1)  
-        dist = np.exp(-dist2 / (2 * sigma**2))
-
-        mean_fr_p[p,:] = np.average(mean_fr,axis=0,weights=dist)
-
-        avg_rgb = np.average(rgb_colors, axis=0, weights=dist) 
-        mean_c_p.append(pltcolors.to_hex(avg_rgb))
-        
-    return mean_fr_p, mean_c_p
 
 def neuron_PCA(fr, types, n_components = 10):
     """
@@ -1509,49 +1346,23 @@ def plot_screen_ex(sac_vis, sp, n = 3, max_bright = 255):
     plt.savefig(os.path.join(sp,"plots", str(n) + "_ex_screen.svg"))
     plt.show()
 
-def plot_mean_screen(dif_screen, name, max_bright = 255):
-    fig, axes = plt.subplots(3,1)
+def plot_mean_screen(screen_t, off_sets, sp, name, max_bright = 255):
     
-    for d in range(2):
+    fig, axes = plt.subplots(3,len(screen_t))
+    for t, dif_screen in enumerate(screen_t):
+        for d in range(2):
+            
+            axes[d,t].imshow(dif_screen[d,:,:], cmap="gray")
+            axes[d,t].images[0].set_clim(0,max_bright)
+            axes[d,t].set_axis_off()
     
-        axes[d].imshow(dif_screen[d,:,:], cmap="gray")
-        axes[d].images[0].set_clim(0,max_bright)
-        axes[d].set_axis_off()
-    
-    axes[2].imshow(dif_screen[0,:,:] - dif_screen[1,:,:], cmap="seismic")
-    axes[2].images[0].set_clim(-max_bright,max_bright)
-    axes[2].set_axis_off()
-    
-    plt.suptitle(name)
+        axes[2,t].imshow(dif_screen[0,:,:] - dif_screen[1,:,:], cmap="seismic")
+        axes[2,t].images[0].set_clim(-max_bright,max_bright)
+        axes[2,t].set_axis_off()
+        axes[0,t].set_title(str(off_sets[t]) + "s")
+
     plt.tight_layout()
-    plt.show()
-
-def plot_ps_pc(all_ps, all_pc, sp):
-    
-    ps_pc = np.zeros((len(all_ps)))
-    for i in range(len(all_ps)):
-        dps = signal.savgol_filter(all_ps[i], window_length=500, 
-                                  polyorder=2, deriv=1)
-
-        dx = signal.savgol_filter(all_pc[i][0,:], window_length=500, 
-                                  polyorder=2, deriv=1)
-        dy = signal.savgol_filter(all_pc[i][1,:], window_length=500, 
-                                  polyorder=2, deriv=1)
-        dpc = np.sqrt(dx**2 + dy**2)
-
-        ps_pc[i] = np.corrcoef(dps, dpc)[0,1]
-    
-    plt.bar(0, np.mean(ps_pc), color="black")
-    plt.scatter(np.zeros((len(all_ps))), ps_pc,c= 'grey')
-    print(ps_pc)
-    
-    plt.ylabel("r coef")
-    plt.ylim([-0.51,0.51])
-    plt.xticks([])
-    for s in ['right', 'top', 'bottom']:
-        plt.gca().spines[s].set_visible(False)
-    
-    plt.savefig(os.path.join(sp,"plots", "ps_pc_corr.svg"))
+    plt.savefig(os.path.join(sp,"plots", name + "_mean_screen.svg"))
     plt.show()
 
 def plot_sac_trayectory(saccades, pupil_center, sac_colors, sp, name,
@@ -1604,87 +1415,6 @@ def plot_sac_var(sac_var, sp, v_max=0.0015):
     plt.savefig(os.path.join(sp, "plots", "sac_var_all.svg"))
     plt.show()
 
-def plot_pupil_stimuli(pupil_size, pupil_center, sync_cam, periods,
-                       vis_stim, colors,  exp, sp, fs = 30000):
-
-    colors.append((0.5, 0.5, 0.5, 0.5)) # gray / no stim
-    
-    ps_stim = []
-    pc_stim = []
-    for stim in vis_stim:
-        stim_times = periods[stim] / fs
-        start, end = stim_times[[0, -1]]
-        mask = (sync_cam > start) & (sync_cam <= end)
-        if stim==vis_stim[0]:
-            mask_first = (sync_cam < start)
-            
-        ps_stim.append(pupil_size[mask])
-        pc_stim.append(pupil_center[:,mask])
-        
-    ps_stim.append(pupil_size[mask_first])
-    pc_stim.append(pupil_center[:,mask_first])
-    vis_stim.append("grey")
-    
-    # Size
-    fig, ax = plt.subplots()
-    ax.set_ylabel('Pupil size')
-    
-    bplot = ax.boxplot(ps_stim, patch_artist=True, sym="", labels = vis_stim)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    #ax.set_ylim([0, 0.5])
-    for patch, color in zip(bplot['boxes'], colors):
-        patch.set_facecolor(color)
-        
-    for s in ['right', 'top']:
-        ax.spines[s].set_visible(False)
-    plt.savefig(os.path.join(sp,"plots", exp + "_ps_stim.svg"))
-    plt.show()
-
-    # Position
-    for s in range(len(vis_stim)):
-        plt.subplot(3,3,s+1)
-        plt.plot(pc_stim[s][0,:], pc_stim[s][1,:], color=colors[s], 
-                 linewidth=0.5)
-        plt.xticks([])
-        plt.yticks([])
-    plt.savefig(os.path.join(sp,"plots", exp + "_pc_stim.svg"))
-    plt.show()
-
-def plot_correlation_hist(corr, cluster_type, colors, edges, name, sp):
-    
-    cluster_type = np.asarray(cluster_type)
-    unique_type = np.unique(cluster_type)
-    mean_type = dict.fromkeys(colors, None)
-    
-    # Hist
-    for neu_type in unique_type:
-        corr_type = corr[cluster_type == neu_type]
-        mean_type[neu_type] = np.mean(corr_type)
-        plt.hist(corr_type, edges, 
-                 density=True, histtype='step', fill=False,
-                 edgecolor=colors[neu_type], label=f"{neu_type}")
-    
-    _, ylim = plt.ylim()
-    
-    #Scatter
-    x = list(mean_type.values())
-    y = [ylim] * len(mean_type)
-    c = [colors[k] for k in mean_type.keys()]    
-    plt.scatter(x, y, c=c, marker='v')
-    
-    plt.vlines(0,0,ylim,colors="gray",linestyles="dashed")
-    plt.xlabel("r coef")
-    plt.ylabel("Density")
-    plt.legend()
-    plt.xlim([edges[0],edges[-1]])
-    plt.ylim(0,ylim)
-    for s in ['right', 'top']:
-        plt.gca().spines[s].set_visible(False)
-    plt.title(name)
-    
-    plt.savefig(os.path.join(sp,"plots", name + "_corr.svg"))
-    plt.show()
-
 def plot_hist_typ(metric, cluster_type, colors, edges, 
                   sp, name, m_name, cum=True, xlabel="r coef."):
     
@@ -1728,18 +1458,28 @@ def plot_sc_hist(rts_sc, c_types, edges, sp, exp = "all"):
     
     for neu_type in unique_type:
         type_mask = c_types == neu_type
-        rts_sc_t = rts_sc[:,type_mask,:]
-        for p in range(2):
+        if rts_sc.ndim == 3:
+            rts_sc_t = rts_sc[:,type_mask,:]
+            for p in range(2):
+                for s in signs:
+                    sign_mask = rts_sc_t[p,:,1] == s
+                    
+                    rts_sc_s = rts_sc_t[p,sign_mask,0]
+                    
+                    plt.hist(rts_sc_s, edges, histtype='step', 
+                             weights= s * np.ones_like(rts_sc_s), 
+                             edgecolor=neu_type, alpha=alphas[p])
+        else:
+            rts_sc_t = rts_sc[type_mask,:]
             for s in signs:
-                sign_mask = rts_sc_t[p,:,1] == s
+                sign_mask = rts_sc_t[:,1] == s
                 
-                rts_sc_s = rts_sc_t[p,sign_mask,0]
+                rts_sc_s = rts_sc_t[sign_mask,0]
                 
-                
-                plt.hist(rts_sc_s,edges,histtype='step', 
+                plt.hist(rts_sc_s, edges, histtype='step', 
                          weights= s * np.ones_like(rts_sc_s), 
-                         edgecolor=neu_type,alpha=alphas[p])
-            
+                         edgecolor=neu_type)
+                    
         for s in ['right', 'top']:
             plt.gca().spines[s].set_visible(False)
             
@@ -1776,7 +1516,32 @@ def plot_sc_scat(rts_sc, c_types, sp, name = "all", xlim=[-0.2, 0.5]):
         plt.xlim(xlim)
         plt.ylim(xlim)
                 
-        plt.savefig(os.path.join(sp,"plots", name + "_" + neu_type + "_rt_hist.svg"))
+        plt.savefig(os.path.join(sp,"plots", name + "_" + neu_type + "_rt_scat.svg"))
+        plt.show()
+
+def plot_sc_rt_angle(rts_sc, c_types, edges, sp, name = "all"):
+    unique_type = np.unique(c_types)
+    
+    for neu_type in unique_type:
+        type_mask = c_types == neu_type
+    
+        angle = np.arctan2(rts_sc[1,type_mask,0], rts_sc[0,type_mask,0]) * 180 / np.pi
+        
+        plt.hist(angle,edges,histtype='step', edgecolor=neu_type)
+        
+        ylim = plt.gca().get_ylim()
+        plt.vlines(45,ylim[0],ylim[1],colors="grey", linestyle="dashed")
+        
+        for s in ['right', 'top']:
+            plt.gca().spines[s].set_visible(False)
+            
+        plt.xlabel("angle")
+        plt.ylabel("count.")
+        plt.xlim([edges[0],edges[-1]])
+        plt.ylim(ylim)
+        plt.gca().invert_xaxis()
+                
+        plt.savefig(os.path.join(sp,"plots", name + "_" + neu_type + "_rt_angle.svg"))
         plt.show()
 
 def plot_all_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
@@ -1850,86 +1615,7 @@ def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.25,1]
     
     plt.savefig(os.path.join(sp, "plots", name + "_mi.svg"))
     plt.show()
-
-def plot_similarity_2d(similarity_type, plot_bin, edges, name, sp, clim=[-1,1]):
-    bins_1d = (edges[1:] + edges[:-1]) / 2
-    nx = len(bins_1d)
-    row, col = divmod(plot_bin, nx)
-    
-    fig, axes = plt.subplots(1,len(similarity_type)+1, figsize=(12, 6))
-
-    # Plot each similarity matrix
-    for i, nt in enumerate(similarity_type.keys()):
-        sim_matrix = similarity_type[nt][plot_bin, :]
-        im = axes[i].imshow(sim_matrix.reshape(nx, nx), cmap="Spectral",
-                            extent=[edges[0], edges[-1], edges[0], edges[-1]], 
-                            vmin=clim[0], vmax=clim[1], origin='lower')
-        axes[i].scatter(bins_1d[col], bins_1d[row], color="black")
-        #axes[i].invert_yaxis()
-        axes[i].axis('off')
-        axes[i].set_title(nt)
         
-    
-    cbar = fig.colorbar(im, ax=axes[3])
-    axes[3].axis('off')
-    cbar.set_label("Cosine similarity")
-    plt.suptitle(name)
-    plt.tight_layout()
-    plt.savefig(os.path.join(sp,"plots", name + "_bin_" + str(plot_bin) +
-                             "_CS.svg"))
-    plt.show()
-
-def plot_windows_and_events(b, sync_cam, event_t=[], pl = 10, ylim = [0, 0.5],
-                            name="size"):
-    
-    nframes = b.shape[-1]  
-    p = nframes//pl
-    tws = [np.arange(t*p, (t+1)*p) for t in range(pl)]
-    
-    for tw in tws:
-        fig, ax1 = plt.subplots()
-        
-        if b.ndim == 1:
-            ax1.plot(sync_cam[tw], b[tw], color="#D3B9F4")
-        else:
-            ax1.plot(sync_cam[tw], b[0,tw], color="#00bbf9")
-            ax1.plot(sync_cam[tw], b[1,tw], color="#00f5d4")
-        
-        if len(event_t) > 0:
-            mask = (event_t >= sync_cam[tw[0]]) & \
-                   (event_t < sync_cam[tw[-1]])
-            win_change = event_t[mask]
-            for ti in win_change:
-                ax1.vlines(ti, ylim[0], ylim[1], colors="k", linestyles="--", alpha=0.3)
-
-        ax1.set_ylim(ylim)
-        ax1.set_xlabel('time (s)')
-        ax1.set_ylabel(name)
-        plt.show()
-        
-def plot_fr_aligned(tw, mean_fr, c_types, sp="none", name="fr_aligned"):        
-    for n in range(mean_fr.shape[0]):
-        fig = plt.figure()
-        if mean_fr.ndim == 2:
-            plt.plot(tw, mean_fr[n,:], 
-                     color=c_types[n])
-        else:
-            plt.plot(tw, mean_fr[n,:,0], 
-                     color=c_types[n])
-            plt.plot(tw, mean_fr[n,:,1], 
-                     color=c_types[n], linestyle="dashed")
-        plt.xlim([tw[0],tw[-1]])
-        plt.xlabel("time [s]")
-        plt.ylabel("firing rate")
-        for s in ['right', 'top']:
-            plt.gca().spines[s].set_visible(False)
-        if sp == "none":
-            plt.show()
-        else:
-            plt.savefig(os.path.join(sp,"plots", "Neurons",
-                                     str(n) + name +".png"))
-            plt.close(fig)
-
 def plot_type_scatter(x, y, colors, cluster_type, sp, name="all",
                       xlabel="m",ylabel="w",corr=False):
     
@@ -2038,29 +1724,9 @@ def plot_sac_amp_diagram(delta_x, sp, xlim = [-30,30], sig=1):
         plt.savefig(os.path.join(sp,"plots", model + "_diagram.svg"))
         plt.show()
 
-def plot_ps_exp(stats_fr, s_bins, colors, cluster_type, n, sp, 
-                ylim=[-1,3]):
-
-    median = stats_fr[n,:,0]
-    p5 = stats_fr[n,:,1]
-    p95 = stats_fr[n,:,2]
-    c = colors[cluster_type[n]]
-    
-    plt.plot(s_bins, median, alpha=0.2, color=c, marker="o")
-    #plt.fill_between(s_bins, p5, p95, alpha=0.3,
-    #                 facecolor=c)
-    #plt.ylim(ylim)            
-    plt.xlabel("pupil size")
-    plt.ylabel("z-scored fr")
-
-    for s in ['right', 'top']:
-        plt.gca().spines[s].set_visible(False)
-    plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
-    plt.show()
-
-def plot_raster(spikes_all, sync_cam, align_indx, fr_colors, spk_colors, 
-                tw, mean_fr, c_types, cluster_type, rts=[], coding = np.array([]),
-                sp="none", name="fr_aligned.png"):
+def plot_raster(spikes_all, mean_fr, sync_cam, align_indx, tw, c_types, cluster_type, 
+                fr_colors=["grey"], spk_colors=["grey"], rts=[],
+                coding = np.array([]), sp="none", name="fr_aligned.png"):
         
     for n, spikes in enumerate(spikes_all):
 
@@ -2072,19 +1738,17 @@ def plot_raster(spikes_all, sync_cam, align_indx, fr_colors, spk_colors,
         
         fig, axes = plt.subplots(2,1, figsize=(10, 8))
         
-        if spk_colors:
-            axes[0].eventplot(aligned_spikes, colors=spk_colors)  
-        else:
-            axes[0].eventplot(aligned_spikes)
+        axes[0].eventplot(aligned_spikes, colors=spk_colors)  
+
             
         axes[0].set_xlim([tw[0],tw[-1]])
         axes[0].axis('off')
         
-        if mean_fr.ndim == 3: # saccades
+        if mean_fr.ndim == 3: # sac dir
             axes[1].plot(tw, mean_fr[n,:,0], color=fr_colors[0])
             axes[1].plot(tw, mean_fr[n,:,1], color=fr_colors[1])
             
-            if rts:
+            if len(rts)>0:
                 ylim = axes[1].get_ylim()
                 axes[1].vlines([rt[n,0] for rt in rts], ylim[0], ylim[1],
                                colors = fr_colors, linestyle="--", alpha=0.8)
@@ -2095,19 +1759,24 @@ def plot_raster(spikes_all, sync_cam, align_indx, fr_colors, spk_colors,
                     code = coding[n,:] == c                             
                     axes[1].scatter(tw[code], tw_ylim[code], c=fr_colors[c],
                                     edgecolors="none")
-
-            axes[1].spines['bottom'].set_color(c_types[n])
-            axes[1].spines['left'].set_color(c_types[n])
-            axes[1].tick_params(axis='both', colors=c_types[n])
-            axes[1].xaxis.label.set_color(c_types[n])
-            axes[1].yaxis.label.set_color(c_types[n])
             
         else:
-            axes[1].plot(tw, mean_fr[n,:], color=c_types[n])
+            axes[1].plot(tw, mean_fr[n,:], color=fr_colors[0])
+            if len(rts)>0:
+                ylim = axes[1].get_ylim()
+                axes[1].vlines(rts[n,0], ylim[0], ylim[1],
+                               colors = fr_colors[0], linestyle="--", alpha=0.8)
             
         axes[1].set_xlim([tw[0],tw[-1]])
         axes[1].set_xlabel("time [s]")
         axes[1].set_ylabel("firing rate")
+
+        axes[1].spines['bottom'].set_color(c_types[n])
+        axes[1].spines['left'].set_color(c_types[n])
+        axes[1].tick_params(axis='both', colors=c_types[n])
+        axes[1].xaxis.label.set_color(c_types[n])
+        axes[1].yaxis.label.set_color(c_types[n])
+
         plt.tight_layout()
         
         for s in ['right', 'top']:
@@ -2171,27 +1840,6 @@ def plot_nratio_code(code, cluster_type, colors, tw, sp, name):
     plt.savefig(os.path.join(sp,"plots", name + "_nratio.svg"))
     plt.show()
         
-def plot_umap(embedding, c_types, sp, emb_p = [], mean_emb_c = []):
-    plt.scatter(embedding[:,0], embedding[:,1],c=c_types,
-                alpha=0.8, edgecolors="none")
-    if emb_p:
-        plt.scatter(emb_p[:,0], emb_p[:,1],c=mean_emb_c, 
-                    marker="s",edgecolors="white")
-    plt.xlabel("UMAP 1")
-    plt.ylabel("UMAP 2")
-    plt.savefig(os.path.join(sp,"plots", "ps_UMAP.svg"))
-    plt.show()
-
-def plot_angle(pc_angles):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='polar')
-    
-    for a in pc_angles:
-        ax.plot([a, a], [0, 1], alpha=0.7, color="black")
-    
-    ax.set_yticklabels([])
-    plt.show()
-    
 def plot_event(events, b, sac_colors, name, exp, sp, win = [-0.25, 0.25], camara_fs=200):
     
     tiw = np.arange(win[0]*camara_fs, win[1]*camara_fs, dtype=int)
@@ -2566,20 +2214,5 @@ def plot_coding(n_plot, tw, coding, cluster_type, connected_pairs,
             axes[ni].set_xlabel("time [s]")
         else:
             axes[ni].set_xticklabels([])
-    plt.show()
-
-def plot_proj(tw, proj, delta_x, sac_colors):
-    #(t,e)
-    for s in range(proj.shape[1]):
-        sign = int((np.sign(delta_x[s]) + 1) / 2)
-        strenght = np.abs(delta_x[s]) / np.max(np.abs(delta_x))
-        plt.plot(tw, proj[:,s], color=sac_colors[sign], alpha=strenght)
-    plt.xlabel(" time [s]")
-    plt.ylabel("proj. fr")
-
-    for s in ['right', 'top']:
-        plt.gca().spines[s].set_visible(False)
-    #plt.savefig(os.path.join(sp,"plots", str(n) + "ps_fr.svg"))
-
     plt.show()
 
