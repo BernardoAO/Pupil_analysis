@@ -685,7 +685,7 @@ def get_sac_amp(spikes, sync_cam, saccades, pupil_x,
     return delta_x, delta_fr
 
 def get_delta_fr(spikes, sync_cam, mov_bar,
-                win_b=[-0.2,0],win_r=[0.5,1], camara_fs=200):
+                win_b=[-0.2,0], win_r=[0,0.2], camara_fs=200):
     """
     Calculates the difference of pupil x and firing rate for the saccades. 
 
@@ -764,21 +764,22 @@ def lin_model_sac(delta_x, delta_fr, m_names, sig=True):
     delta_fr : np.array, shape (N, n_sac)
 
     Returns:
-    models : dict, len(3)
+    models : dict, len(M)
     sig_ws : np.array, shape (N, 3)
 
     """
-    xs = [delta_x, np.abs(delta_x), np.sign(delta_x)]
+    xs_all = {"x": delta_x, "|x|":np.abs(delta_x), "sign(x)":np.sign(delta_x)}
+    xs = {k: xs_all[k] for k in m_names}
     models = dict.fromkeys(m_names, None)
-    sig_ws = np.zeros((delta_fr.shape[0], len(xs)))
+    sig_ws = dict.fromkeys(m_names, None)
     
     
-    for i, x in enumerate(xs):
+    for name, x in xs.items():
         coefs = np.array([np.polyfit(x, neu, 1) for neu in delta_fr])       
-        models[m_names[i]] = coefs
+        models[name] = coefs
         
         if sig:
-            sig_ws[:, i] = lin_model_sac_sig(x, delta_fr)
+            sig_ws[name] = lin_model_sac_sig(x, delta_fr)
         
         #ss_tot = np.sum((delta_fr - np.mean(delta_fr, axis=1, keepdims=True))**2,
         #                axis=1)
@@ -787,6 +788,28 @@ def lin_model_sac(delta_x, delta_fr, m_names, sig=True):
         # r2s[:,i] = 1 - ss_res / ss_tot
 
     return models, sig_ws
+
+def get_corr_typ(x, y, colors, cluster_type):
+    """
+    Correlation for types between 2 metrics (x and y)
+    
+    Parameters:
+    x,y : np.array, shape (N)
+    colors : dic, len(3)
+    cluster_type: list, len(N)
+
+    Returns:
+    corr : dict, len(3)    
+    """
+    cluster_type = np.asanyarray(cluster_type)
+    types = colors.keys()
+    corr =  dict.fromkeys(colors)
+    
+    for typ in types:
+        n_type = cluster_type == typ
+        corr[typ] = np.corrcoef(x[n_type], y[n_type])[0,1]
+    
+    return corr
     
 def get_similarity(mean_fr, cluster_type, colors):
     """
@@ -940,7 +963,8 @@ def get_MI(trial_fr, s):
     
     return mutual_info
 
-def get_sig_MI(mutual_info_raw, tw, basal_max = -0.25, p = 0.1, n_tw = 5):
+def get_sig_MI(mutual_info_raw, tw, basal_max = -0.25, p = 0.01, n_tw = 10, 
+               sig_typ="distribution"):
     """
     Significant mutual information when compared with a basal distribution.
     Keeps only significan values, otherwise zero.
@@ -954,6 +978,7 @@ def get_sig_MI(mutual_info_raw, tw, basal_max = -0.25, p = 0.1, n_tw = 5):
 
     Returns:            
     mutual_info : np.ndarray, shape (n_neu, Tw)
+    baseline: np.ndarray, shape (n_neu)
     """
     mutual_info = np.zeros_like(mutual_info_raw)
 
@@ -961,13 +986,20 @@ def get_sig_MI(mutual_info_raw, tw, basal_max = -0.25, p = 0.1, n_tw = 5):
     n_basal = sum(tm_basal)
     ti_resp = np.arange(len(tw))[~ tm_basal]
     mutual_info_basal = mutual_info_raw[:,tm_basal]
+    baseline = np.mean(mutual_info_basal, axis=1)
     
     for n in range(mutual_info.shape[0]):
 
         sig_tw = 0
         for ti in ti_resp:
+            
+            if sig_typ == "distribution":
+                sig = sum(mutual_info_basal[n,:] > mutual_info_raw[n,ti]) / n_basal < p
+                
+            elif sig_typ == "mean":
+                sig = baseline[n] < mutual_info_raw[n,ti]
 
-            if sum(mutual_info_basal[n,:] > mutual_info_raw[n,ti]) / n_basal < p:
+            if sig:
                 sig_tw += 1
                 
                 if sig_tw == n_tw:
@@ -980,7 +1012,7 @@ def get_sig_MI(mutual_info_raw, tw, basal_max = -0.25, p = 0.1, n_tw = 5):
             else:
                 sig_tw = 0
                     
-    return mutual_info
+    return mutual_info, baseline
 
 def get_class_coding(fr, align_indx1, align_indx2, win=[-0.25, 1], 
                      p = 0.05, n_p = 1000, n_tw = 5, camara_fs = 200):
@@ -1572,7 +1604,44 @@ def plot_all_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
         plt.savefig(os.path.join(sp, "plots", typ+"_rts_boxplot.svg"))
         plt.show()
 
-def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.25,1]):
+def plot_type_means(rts_sc, cluster_type, colors, sp, xlim=[-0.3,0.6]):
+    cluster_type = np.asanyarray(cluster_type)
+    types = colors.keys()
+    
+    for ti, typ in enumerate(types):
+        rts_t = rts_sc[cluster_type == typ, 0]
+        plt.errorbar(np.nanmean(rts_t), ti, xerr=np.nanstd(rts_t),
+                     color=colors[typ],fmt='o')
+    
+    plt.xlim(xlim)
+    plt.xlabel("time [s]")
+    for s in ['right', 'top','left']:
+        plt.gca().spines[s].set_visible(False)
+    plt.yticks([])
+    
+    plt.savefig(os.path.join(sp, "plots", "rts_means.svg"))
+    plt.show()
+
+def plot_pie(metric, cluster_type, colors, sp, name = "rts"):
+    cluster_type = np.asanyarray(cluster_type)
+    types = colors.keys()
+    
+    fig, axes = plt.subplots(3,1)
+    for ti, typ in enumerate(types):
+        metric_typ = metric[cluster_type == typ]
+
+        frac = np.sum(~np.isnan(metric_typ)) / len(metric_typ)
+        
+        axes[ti].pie([frac, 1 - frac], colors=[colors[typ], 'none'], 
+                     labels= [str(int(frac*100)),""], startangle=90)
+        axes[ti].set_title(typ)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(sp, "plots", name + "_pie.svg"))
+    plt.show()
+
+
+def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.3,0.6]):
     
     cluster_type = np.asanyarray(cluster_type)
     unique_type = np.unique(cluster_type)
@@ -1584,13 +1653,14 @@ def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.25,1]
     for neu_type in unique_type:
         
         mask_type_f = (cluster_type == neu_type)
+        n_typ =  np.sum(mask_type_f)
         mask_type = np.tile(mask_type_f[:, np.newaxis], (1, sig_mask.shape[1]))
         mask_com = mask_type & sig_mask
         
-        per_sig = np.sum(mask_com, axis=0) / np.sum(mask_type_f) * 100
+        per_sig = np.sum(mask_com, axis=0) / n_typ * 100
         
         masked_mi = np.where(mask_com, mutual_info, np.nan)
-        mean_mi = np.nanmean(masked_mi, axis=0)
+        mean_mi = np.nansum(masked_mi, axis=0) / n_typ 
         mean_mi = np.where(np.isnan(mean_mi), 0, mean_mi)
         
         axes[0].plot(tw, per_sig, color=colors[neu_type], label=neu_type)
@@ -1615,17 +1685,35 @@ def plot_mean_mi(tw, mutual_info, cluster_type, colors, sp, name, xlim=[-0.25,1]
     
     plt.savefig(os.path.join(sp, "plots", name + "_mi.svg"))
     plt.show()
+
+def plot_mi_exp(tw, mutual_info, mutual_info_raw, cluster_type, colors, sp, 
+                xlim=[-0.3,0.6], hline="none"):
         
+    for n in range(mutual_info.shape[0]):
+        plt.plot(tw, mutual_info[n,:], color=colors[cluster_type[n]])
+        plt.plot(tw, mutual_info_raw[n,:], color=colors[cluster_type[n]],
+                 alpha=0.5)
+        
+        if not hline == "none":
+            plt.hlines(hline[n],xlim[0],xlim[1],color="gray",linestyles="--")
+        
+        plt.xlim(xlim)
+        plt.ylabel("MI [bits]")
+        plt.savefig(os.path.join(sp, "plots", str(n) + "_mi.svg"))
+        plt.show()
+
 def plot_type_scatter(x, y, colors, cluster_type, sp, name="all",
-                      xlabel="m",ylabel="w",corr=False):
+                      xlabel="m",ylabel="w",corr=[],xlim=[],ylim=[]):
     
     c_types = np.array([colors[n] for n in cluster_type])
     if "all" in name:
         unique_clusters = colors.keys()
-        xlim = [np.min(x), np.max(x)]
-        ylim = [np.min(y), np.max(y)]
+        if not xlim:
+            xlim = [np.min(x), np.max(x)]
+        if not ylim:
+            ylim = [np.min(y), np.max(y)]
         
-        fig, axes = plt.subplots(len(unique_clusters), 1, figsize=(10, 8))
+        fig, axes = plt.subplots(len(unique_clusters), 1, figsize=(5, 15))
         
         for i, c in enumerate(unique_clusters):
             n_type = c_types == colors[c]
@@ -1633,8 +1721,8 @@ def plot_type_scatter(x, y, colors, cluster_type, sp, name="all",
             axes[i].scatter(x[n_type], y[n_type], c=colors[c], alpha=0.6)
             
             if corr:
-                corr_c = np.corrcoef(x[n_type], y[n_type])[0,1]
-                axes[i].legend([f"r = {corr_c:.2f}"])
+                corr_typ = corr[c]
+                axes[i].legend([f"r = {corr_typ:.2f}"])
             axes[i].set_xlim(xlim)
             axes[i].set_ylim(ylim)
             axes[i].set_ylabel(ylabel)
@@ -1659,18 +1747,22 @@ def plot_type_scatter(x, y, colors, cluster_type, sp, name="all",
         for ax in ['right', 'top']:
             plt.gca().spines[ax].set_color('none')
     
-    plt.savefig(os.path.join(sp,"plots", name + "_m_w.svg"))
+    plt.savefig(os.path.join(sp,"plots", name + "_scatter.svg"))
     plt.show()
 
 def plot_sac_amp_ex(delta_x, delta_fr, sca_fr, n_plot, cluster_type, colors,
                     sp, exp):
     
     for n in n_plot:
+        m = np.mean(delta_fr[n,:])
         plt.scatter(delta_x, delta_fr[n,:], c=colors[cluster_type[n]])
         xlim = plt.gca().get_xlim()
         x = np.arange(xlim[0], xlim[1], 0.01)
         plt.plot(x, x * sca_fr[n,0] + sca_fr[n,1], color="blue")
+        plt.plot(xlim, [m,m], color="hotpink")
+        
         plt.xlabel("Δx")
+        plt.xticks([-0.2,0,0.2])
         plt.ylabel("Δfr")
         
         for ax in ['left', 'bottom']:
@@ -2130,6 +2222,30 @@ def plot_types(experiments, all_types, colors, sp = "none"):
     
     if not sp == "none":
         plt.savefig(os.path.join(sp,"plots", "n neurons.svg"))
+    plt.show()
+
+def plot_n_sac(experiments, n_sac, sac_colors, sp = "none"):
+    
+    exp = [e[2:10] if not e == "2023-03-15_15-23-14" else
+           e[2:10] + "_2" for e in experiments]
+    
+    x = np.arange(len(experiments))
+    width = 0.35  # width of each bar
+    
+    vals1 = [v[0] for v in n_sac]
+    vals2 = [v[1] for v in n_sac]
+    
+    plt.bar(x - width/2, vals1, width=width, color=sac_colors[0], label='temporal')
+    plt.bar(x + width/2, vals2, width=width, color=sac_colors[1], label='nasal')
+    
+    plt.xticks(x, exp, rotation=45)
+    plt.legend()
+    
+    for s in ['right', 'top']:
+        plt.gca().spines[s].set_visible(False)    
+    
+    if not sp == "none":
+        plt.savefig(os.path.join(sp,"plots", "n_sac.svg"))
     plt.show()
     
 def plot_conn(connected_pairs, cluster_type, colors, sp, name):
