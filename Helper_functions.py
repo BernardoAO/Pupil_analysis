@@ -239,7 +239,7 @@ def import_saccades(session, side, filename="saccades.txt"):
 
     return data
 
-def get_stims(Spke_Bundle, mb_offset = 0.6, fs = 30000):
+def get_stims(Spke_Bundle, mb_offset = 0.6, fs = 30000, mb_dir="hor"):
     """
     Visual stimuli for each recording.
 
@@ -253,9 +253,9 @@ def get_stims(Spke_Bundle, mb_offset = 0.6, fs = 30000):
     - mov_bar : dict {"temporal":list,"nasal":list}
 
     """
-    vis_stim_all = ["Sl36x22_d_3","Sd36x22_l_3", "mb", 
-                "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
-                "csd", "chirp","sg"]
+    vis_stim_all = ["Sl36x22_d_3","Sd36x22_l_3", "mg_sq", "mb",
+                    "Nat_Mov", "Nat_Mov_sw", "Nat_Mov_sc",
+                    "csd", "chirp","sg"]
     cmap = plt.get_cmap('jet', len(vis_stim_all))    
     
     vis_stim = []
@@ -266,18 +266,19 @@ def get_stims(Spke_Bundle, mb_offset = 0.6, fs = 30000):
             colors.append(cmap(i))
     
     # Moving bar
-    
+    mb_all = {"hor":[[0.,30.,330.], [180.,210.,150]],
+             "ver":[[60.,90.,120.], [240.,270.,300]]}
     mov_bar = dict.fromkeys(["temporal","nasal"], np.array([], dtype=np.int64))
     mb = Spke_Bundle["events"]["mb"] + mb_offset * fs
     mb_or = Spke_Bundle["stim_params_files"]["mb"]["stimulus"]["sequence"]["orientations"]
     sync_cam = Spke_Bundle["Synchronization_TTLs"]["Sync_cam"]
     
     for b, bar in enumerate(mb):
-        if mb_or[b] in [0.,30.,330.]:
+        if mb_or[b] in mb_all[mb_dir][0]:
             indx = np.abs(sync_cam - bar).argmin()
             mov_bar["temporal"] = np.append(mov_bar["temporal"], indx)
             
-        elif mb_or[b] in [180.,210.,150.]:
+        elif mb_or[b] in mb_all[mb_dir][1]:
             indx = np.abs(sync_cam - bar).argmin()
             mov_bar["nasal"] = np.append(mov_bar["nasal"], indx)
     
@@ -522,7 +523,7 @@ def import_pupil_data(pupil_data_path, Spke_Bundle, exp, period, fs = 30000):
     return sync_cam[mask], pupil_size[mask], pupil_center[:,mask], saccades
 
 def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, connected_pairs_all,
-                      colors, units_for_plot=[]):
+                      colors, units_for_plot=[], print_ci=False):
     """
     Gets valid units: (TCA, NW, BW).
     Parameters:
@@ -565,6 +566,11 @@ def get_valid_cluster(Spke_Bundle, SIN_data, spiketimes, connected_pairs_all,
     if units_for_plot:
         valid_spiketimes = [valid_spiketimes[u] for u in units_for_plot]
         cluster_type = [cluster_type[u] for u in units_for_plot]
+        
+        if print_ci:
+            c_name = Spke_Bundle["clus_id"].values
+            print("cluster indices: ", 
+                  [c_name[valid_cluster_indx[u]] for u in units_for_plot])
         
     c_types = np.array([colors[n] for n in cluster_type])
     
@@ -1185,7 +1191,7 @@ def noise_PCA(fr, trial_fr, types, n_components = 10):
 
     return exp_var
 
-def pca_var_sig(pca_results_list, exp_var_n_list, n_p=100, p = 0.051):
+def pca_var_sig(pca_results_list, exp_var_n_list, n_p=100, p = 0.05):
     """
     Calculates the significance of PCA weights using a paired t-test with 
     permutations.
@@ -1230,9 +1236,10 @@ def pca_var_sig(pca_results_list, exp_var_n_list, n_p=100, p = 0.051):
     
     return sig_nc
 
-def get_t_significance(all_ps_corr, all_types_cat, n_p=1000):
+def get_t_significance(metric, cluster_type, n_p=1000):
     """
-    Gets significance using a permutation t-test for TCA>NW and NW>BW.
+    Gets significance using a permutation t-test for comparing the difference
+    in the means of the 3 different pairs between TCA,NW, and BW.
 
     Parameters:
     all_ps_corr : np.array, [n]
@@ -1242,24 +1249,24 @@ def get_t_significance(all_ps_corr, all_types_cat, n_p=1000):
     Returns:
         None
     """
-    all_types_cat = np.asarray(all_types_cat)
-    TCA = all_ps_corr[all_types_cat == "TCA"]
-    NW  = all_ps_corr[all_types_cat == "NW"]
-    BW  = all_ps_corr[all_types_cat == "BW"]
-
     def t_stat(x, y):
         return np.mean(x) - np.mean(y)
+    
+    cluster_type = np.asarray(cluster_type)
+    TCA = metric[(cluster_type == "TCA") & ~np.isnan(metric)]
+    NW  = metric[(cluster_type == "NW") & ~np.isnan(metric)]
+    BW  = metric[(cluster_type == "BW") & ~np.isnan(metric)]
 
-    # TCA vs NW
-    res1 = stats.permutation_test((TCA, NW), statistic=t_stat, n_resamples=n_p,
-                                  alternative="greater", random_state=0)
+    TCA_NW = stats.permutation_test((TCA, NW), statistic=t_stat, n_resamples=n_p,
+                                  alternative="two-sided", random_state=0)
+    TCA_BW = stats.permutation_test((TCA, BW), statistic=t_stat, n_resamples=n_p,
+                                  alternative="two-sided", random_state=0)
+    NW_BW = stats.permutation_test((NW, BW), statistic=t_stat, n_resamples=n_p,
+                                  alternative="two-sided", random_state=0)
 
-    # NW vs BW
-    res2 = stats.permutation_test((NW, BW), statistic=t_stat, n_resamples=n_p,
-                                  alternative="greater", random_state=0)
-
-    print(f"TCA > NW: p = {res1.pvalue:.4g}, "
-          f"NW > BW: p = {res2.pvalue:.4g}")
+    print(f"TCA > NW: p = {TCA_NW.pvalue:.4g}, "
+          f"TCA > BW: p = {TCA_BW.pvalue:.4g}, "
+          f"NW > BW: p = {NW_BW.pvalue:.4g}")
 
 ##m Plotting
 
@@ -1329,6 +1336,35 @@ def plot_pupil_results(tv, pupil_size, pupil_size_clean, pupil_center,
     plt.tight_layout()
     plt.savefig(os.path.join(sp, "plots", name + "_pupil_plot.svg"))
     plt.show()
+
+def plot_norm_pc(tv, pupil_center, saccades, sp, xlim=[17,18.5]):
+    colors = {"x":"#00bbf9",
+              "y":"#00f5d4",
+              "temporal":"navy",
+              "nasal":"violet"}
+    
+    tv = tv / 60 # minutes
+    
+    fig, ax = plt.subplots()
+    # Second subplot: pupil center
+    ax.plot(tv, pupil_center[0, :], color=colors["x"], label="x")
+    ax.plot(tv, pupil_center[1, :], color=colors["y"], label="y")
+    
+    ylim = ax.get_ylim()
+    for s in ["temporal","nasal"]:
+        saccades = saccade_indx[s]
+        for idx in saccades:
+            ax.vlines(tv[idx], ylim[0], ylim[1], 
+                       colors=colors[s], linestyles="--")
+    ax.set_ylim(ylim)
+    
+    ax.set_xlim(xlim)
+    ax.set_xlabel("time [m]")
+    ax.set_ylabel("Norm. coor.")
+    ax.legend()
+    ax.spines[['right', 'top']].set_visible(False)
+    
+    plt.savefig(os.path.join(sp, "plots", "norm_pupil_plot.svg"))
 
 def plot_exp(Spke_Bundle, sync_cam, vis_stim, colors, name, sp,
              saccades=[], sac_colors=[], fs = 30000, y = 1.0, lw=0.25):
@@ -1576,7 +1612,7 @@ def plot_sc_rt_angle(rts_sc, c_types, edges, sp, name = "all"):
         plt.savefig(os.path.join(sp,"plots", name + "_" + neu_type + "_rt_angle.svg"))
         plt.show()
 
-def plot_all_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
+def plot_mice_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
     
     types = colors.keys()
     
@@ -1604,38 +1640,71 @@ def plot_all_rt(rts_sc, cluster_type, colors, sp, xlim=[-0.25,1]):
         plt.savefig(os.path.join(sp, "plots", typ+"_rts_boxplot.svg"))
         plt.show()
 
-def plot_type_means(rts_sc, cluster_type, colors, sp, xlim=[-0.3,0.6]):
+def plot_type_means(metric, cluster_type, colors, sp,
+                    xlim=[-0.3,0.6], xlab="time [s]", name="rts_means"):
     cluster_type = np.asanyarray(cluster_type)
-    types = colors.keys()
+    types = ["BW","NW","TCA"] #colors.keys()
     
     for ti, typ in enumerate(types):
-        rts_t = rts_sc[cluster_type == typ, 0]
-        plt.errorbar(np.nanmean(rts_t), ti, xerr=np.nanstd(rts_t),
-                     color=colors[typ],fmt='o')
-    
+        metric_t = metric[cluster_type == typ]
+        
+        vp = plt.violinplot(metric_t[~np.isnan(metric_t)], positions=[ti + 1],
+                            vert=False, showmeans=True)
+
+        for body in vp['bodies']:
+            body.set_facecolor(colors[typ])
+            body.set_edgecolor(colors[typ])
+        
+        for part in ('cmeans', 'cbars', 'cmins', 'cmaxes'):
+            if part in vp:
+                vp[part].set_color(colors[typ])
+                
     plt.xlim(xlim)
-    plt.xlabel("time [s]")
+    plt.xlabel(xlab)
     for s in ['right', 'top','left']:
         plt.gca().spines[s].set_visible(False)
     plt.yticks([])
     
-    plt.savefig(os.path.join(sp, "plots", "rts_means.svg"))
+    plt.savefig(os.path.join(sp, "plots", name+".svg"))
     plt.show()
 
-def plot_pie(metric, cluster_type, colors, sp, name = "rts"):
-    cluster_type = np.asanyarray(cluster_type)
+def plot_pie(metric, cluster_type, colors, sp, name="rts"):
+    cluster_type = np.asarray(cluster_type)
     types = colors.keys()
-    
-    fig, axes = plt.subplots(3,1)
-    for ti, typ in enumerate(types):
-        metric_typ = metric[cluster_type == typ]
 
-        frac = np.sum(~np.isnan(metric_typ)) / len(metric_typ)
-        
-        axes[ti].pie([frac, 1 - frac], colors=[colors[typ], 'none'], 
-                     labels= [str(int(frac*100)),""], startangle=90)
-        axes[ti].set_title(typ)
-    
+    fig, axes = plt.subplots(len(types), 1)
+
+    multi = isinstance(metric, (list, tuple))
+
+    for ax, typ in zip(axes, types):
+        mask = cluster_type == typ
+        c = colors[typ]
+
+        if not multi:
+            frac = np.mean(~np.isnan(metric[mask]))
+            ax.pie([frac, 1-frac], colors=[c, "none"],
+                   labels=[f"{frac:.0%}", ""], startangle=90)
+
+        else:
+            # Inner circle = first metric
+            p1 = ~np.isnan(metric[0][mask])
+            frac1 = np.mean(p1)
+            ax.pie([frac1, 1-frac1], colors=[c, "none"], radius=0.7,
+                   labels=[f"{frac1:.0%}", ""], startangle=90)
+            
+            # Outer ring = second metric
+            p2 = ~np.isnan(metric[1][mask])
+            frac2 = np.mean(p2)
+
+            overlap = np.mean(p1 & p2)
+            only2   = np.mean(~p1 & p2)
+
+            
+            ax.pie([overlap, 1-frac2, only2], colors=[c, "none",c], radius=1,
+                   labels=[f"{overlap:.0%}", "",f"{only2:.0%}"], startangle=90)
+
+        ax.set_title(typ)
+
     plt.tight_layout()
     plt.savefig(os.path.join(sp, "plots", name + "_pie.svg"))
     plt.show()
@@ -1817,7 +1886,7 @@ def plot_sac_amp_diagram(delta_x, sp, xlim = [-30,30], sig=1):
         plt.show()
 
 def plot_raster(spikes_all, mean_fr, sync_cam, align_indx, tw, c_types, cluster_type, 
-                fr_colors=["grey"], spk_colors=["grey"], rts=[],
+                fr_colors=["grey"], spk_colors=["grey"], rts=[], xlims=[-0.3,0.6],
                 coding = np.array([]), sp="none", name="fr_aligned.png"):
         
     for n, spikes in enumerate(spikes_all):
@@ -1858,8 +1927,10 @@ def plot_raster(spikes_all, mean_fr, sync_cam, align_indx, tw, c_types, cluster_
                 ylim = axes[1].get_ylim()
                 axes[1].vlines(rts[n,0], ylim[0], ylim[1],
                                colors = fr_colors[0], linestyle="--", alpha=0.8)
-            
-        axes[1].set_xlim([tw[0],tw[-1]])
+        
+        if not xlims:
+            xlims=[tw[0],tw[-1]]
+        axes[1].set_xlim(xlims)
         axes[1].set_xlabel("time [s]")
         axes[1].set_ylabel("firing rate")
 
@@ -2022,13 +2093,11 @@ def plot_pca(tw, pca_results, colors, pr_colors, sp,
 
         plt.show()
 
-def plot_multi_pca(tw, pca_results, colors, pr_colors, sp,
-             name="all", nc=3):
+def plot_multi_pca(tw, pca_results, colors, pr_colors, sp, va,
+             name="all", nc=3,t1=0,t2=-1):
     
-    va = np.array([[90,90,45],
-                   [270,270,45]])
-    i_0 = np.argwhere(tw==0)[0][0]
-    i_05 = np.argwhere(tw==0.5)[0][0]
+    i_0 = np.argwhere(tw==t1)[0][0]
+    i_05 = t2#np.argwhere(tw==t2)[0][0]
     
     types = colors.keys()
     
